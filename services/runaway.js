@@ -1,28 +1,24 @@
-const { BaseAIService } = require('../base');
+// services/runaway.js
+class RunawayService {
+  constructor(name, url) {
+    this.name = name;
+    this.url = url;
+    console.log(`Stub RunawayService initialized with name: ${name}, url: ${url}`);
+    this.apiKey = process.env.RUNAWAY_API_KEY; // Or RUNWAY_API_KEY if that's more appropriate
+    console.log('RunawayService: In a real implementation, would load API key from process.env.RUNAWAY_API_KEY');
+    if (!this.apiKey) {
+      console.warn('RunawayService: RUNAWAY_API_KEY environment variable not set.');
+    }
+  }
 
-class RunwayService extends BaseAIService {
+  async generateImage(visualPrompt) {
+    console.log('STUB: RunawayService.generateImage called with visualPrompt:', visualPrompt);
+    return Promise.resolve({ image: 'path/to/stub/image.png' });
+  }
+
   async generateVideo(strategy) {
-    await this.page.goto('https://app.runwayml.com/video-tools', { waitUntil: 'networkidle' });
-    
-    // Enter text-to-video prompt
-    await this.page.fill('textarea.prompt-input', strategy.visualPrompt);
-    await this.page.click('button.generate-video');
-    
-    // Wait for generation
-    await this.page.waitForSelector('.generated-video', { timeout: 180000 });
-    
-    // Download video
-    const [download] = await Promise.all([
-      this.page.waitForEvent('download'),
-      this.page.click('button.download-video')
-    ]);
-    
-    const fileName = `video-${Date.now()}.mp4`;
-    const savePath = path.join(TEMP_DIR, fileName);
-    await download.saveAs(savePath);
-    
-    return { path: savePath, fileName };
+    console.log('STUB: RunawayService.generateVideo called with strategy:', strategy);
+    return Promise.resolve({ video: 'path/to/stub/runaway_video.mp4' });
   }
 }
-
-module.exports = RunwayService;
+module.exports = RunawayService;

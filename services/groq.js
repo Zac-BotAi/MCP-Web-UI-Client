@@ -2,20 +2,26 @@ const { Groq } = require("groq-sdk");
 
 class GroqService {
   constructor() {
-    this.groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
+    const apiKey = process.env.GROQ_API_KEY;
+    if (!apiKey) {
+      console.warn('GroqService: GROQ_API_KEY environment variable not set. GroqService may not function.');
+    }
+    this.groq = new Groq({ apiKey });
   }
 
-  async generateStrategy(topic) {
-    const prompt = `Develop a viral content strategy about "${topic}" including:
-    - Psychological hooks for maximum engagement
-    - Trending music style recommendations
+  async generateStrategy(topic, psychologyElements) {
+    const prompt = `Develop a viral content strategy about "${topic}" incorporating the following elements:
+    - Specific Hook: "${psychologyElements.hook}"
+    - Music Style: "${psychologyElements.music}"
+    - Emotional Triggers: ${psychologyElements.emotionalTriggers.join(', ')}
+    Also include:
     - Visual style (cinematic, meme, documentary, etc.)
     - Target audience personas
     - Viral hashtags (5-7)
     - Attention-grabbing title
     - 2-sentence captivating description
     - Short platform-specific captions
-    
+    Ensure the overall strategy creatively uses the provided hook, music style, and emotional triggers.
     Respond in JSON format: {
       title: "",
       description: "",
