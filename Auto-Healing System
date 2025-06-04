@@ -1,0 +1,12 @@
+async safeClick(selector, timeout=10000) {
+  try {
+    await this.page.waitForSelector(selector, {timeout});
+    await this.page.click(selector);
+  } catch (error) {
+    await this.recoverFromError();
+  }
+}
+
+async recoverFromError() {
+  // Implementation for error recovery
+}
