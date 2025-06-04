@@ -3,11 +3,13 @@ class RunawayService {
   constructor(name, url) {
     this.name = name;
     this.url = url;
-    console.log(`Stub RunawayService initialized with name: ${name}, url: ${url}`);
-    this.apiKey = process.env.RUNAWAY_API_KEY; // Or RUNWAY_API_KEY if that's more appropriate
-    console.log('RunawayService: In a real implementation, would load API key from process.env.RUNAWAY_API_KEY');
-    if (!this.apiKey) {
-      console.warn('RunawayService: RUNAWAY_API_KEY environment variable not set.');
+    console.log(`Stub RunawayService initialized for: ${this.name} (URL: ${this.url})`);
+    this.apiKey = process.env.RUNWAY_API_KEY;
+    console.log('RunawayService: In a real implementation, would load API key from process.env.RUNWAY_API_KEY');
+    if (this.apiKey) {
+      console.log('RunawayService: API key found (length: ' + this.apiKey.length + ')');
+    } else {
+      console.warn('RunawayService: RUNWAY_API_KEY environment variable not set.');
     }
   }
 

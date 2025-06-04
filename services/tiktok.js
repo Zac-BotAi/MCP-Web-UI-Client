@@ -3,10 +3,11 @@ class TikTokService {
   constructor(name, url) {
     this.name = name;
     this.url = url;
-    console.log(`Stub TikTokService initialized with name: ${name}, url: ${url}`);
     this.apiKey = process.env.TIKTOK_API_KEY;
-    console.log('TikTokService: In a real implementation, would load API key/token from process.env.TIKTOK_API_KEY');
-    if (!this.apiKey) {
+    console.log(`TikTokService stub initialized for: ${this.name} (URL: ${this.url})`);
+    if (this.apiKey) {
+      console.log('TikTokService: API key found (length: ' + this.apiKey.length + ')');
+    } else {
       console.warn('TikTokService: TIKTOK_API_KEY environment variable not set.');
     }
   }

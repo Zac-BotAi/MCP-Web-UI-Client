@@ -3,10 +3,11 @@ class CanvaService {
   constructor(name, url) {
     this.name = name;
     this.url = url;
-    console.log(`Stub CanvaService initialized with name: ${name}, url: ${url}`);
     this.apiKey = process.env.CANVA_API_KEY;
-    console.log('CanvaService: In a real implementation, would load API key from process.env.CANVA_API_KEY');
-    if (!this.apiKey) {
+    console.log(`CanvaService stub initialized for: ${this.name} (URL: ${this.url})`);
+    if (this.apiKey) {
+      console.log('CanvaService: API key found (length: ' + this.apiKey.length + ')');
+    } else {
       console.warn('CanvaService: CANVA_API_KEY environment variable not set.');
     }
   }

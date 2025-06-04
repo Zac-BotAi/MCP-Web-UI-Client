@@ -3,10 +3,11 @@ class ElevenLabsService {
   constructor(name, url) {
     this.name = name;
     this.url = url;
-    console.log(`Stub ElevenLabsService initialized with name: ${name}, url: ${url}`);
     this.apiKey = process.env.ELEVENLABS_API_KEY;
-    console.log('ElevenLabsService: In a real implementation, would load API key from process.env.ELEVENLABS_API_KEY');
-    if (!this.apiKey) {
+    console.log(`ElevenLabsService stub initialized for: ${this.name} (URL: ${this.url})`);
+    if (this.apiKey) {
+      console.log('ElevenLabsService: API key found (length: ' + this.apiKey.length + ')');
+    } else {
       console.warn('ElevenLabsService: ELEVENLABS_API_KEY environment variable not set.');
     }
   }
