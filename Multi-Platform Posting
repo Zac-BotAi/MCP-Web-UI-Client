@@ -1,0 +1,12 @@
+// In createViralContent method
+const platforms = ['youtube', 'tiktok', 'instagram'];
+const results = {};
+
+for (const platform of platforms) {
+  const service = await loadService(platform);
+  results[platform] = await service.postContent({
+    video: finalVideo.path,
+    caption: `${strategy.title}\n\n${strategy.description}\n\n${strategy.hashtags.join(' ')}`,
+    tags: strategy.hashtags
+  });
+}
