@@ -1,0 +1,25 @@
+{
+  "name": "telegram-mini-app-backend",
+  "version": "1.0.0",
+  "description": "Backend for Telegram Mini-App",
+  "main": "auth_server.js",
+  "scripts": {
+    "start": "node auth_server.js",
+    "dev": "nodemon auth_server.js"
+  },
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "express": "^4.18.2",
+    "jsonwebtoken": "^9.0.2",
+    "mongoose": "^8.0.0",
+    "ws": "^8.16.0",
+    "node-cron": "^3.0.3",
+    "playwright": "^1.40.1"
+  },
+  "devDependencies": {
+    "nodemon": "^2.0.15"
+  },
+  "engines": {
+    "node": ">=14.0.0"
+  }
+}
