@@ -1,0 +1,4 @@
+User --> Cloudflare --> Render Backend --> AI Services
+                     │
+                     ├──> Google Drive (Storage)
+                     └──> MongoDB (Analytics)
