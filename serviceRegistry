@@ -1,0 +1,7 @@
+const serviceRegistry = {
+  // ... existing services
+  new_service: { 
+    module: './services/new_service', 
+    url: 'https://new-ai-service.com' 
+  }
+};

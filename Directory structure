@@ -1,0 +1,12 @@
+mcp-viral-system/
+├── services/
+│   ├── groq.js
+│   ├── claude.js
+│   ├── new_service.js
+│   └── ...
+├── sessions/ (persistent storage)
+├── .env.example
+├── Dockerfile
+├── render.yaml
+├── package.json
+└── server.js

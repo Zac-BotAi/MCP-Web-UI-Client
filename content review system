@@ -1,0 +1,5 @@
+// In createViralContent
+const requiresReview = await this.contentSafetyCheck(strategy);
+if (requiresReview) {
+  await this.sendForHumanReview(strategy);
+}

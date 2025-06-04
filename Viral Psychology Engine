@@ -1,0 +1,27 @@
+// services/psychology.js
+class ViralPsychology {
+  static getEngagementTriggers() {
+    return {
+      hooks: [
+        "Curiosity gap",
+        "Emotional resonance",
+        "Social validation",
+        "Unexpected twist",
+        "Relatable struggle"
+      ],
+      emotions: [
+        "Awe", "Amusement", "Indignation", 
+        "Inspiration", "Nostalgia"
+      ]
+    };
+  }
+
+  static generateViralElements(topic) {
+    const triggers = this.getEngagementTriggers();
+    return {
+      hook: triggers.hooks[Math.floor(Math.random() * triggers.hooks.length)],
+      emotion: triggers.emotions[Math.floor(Math.random() * triggers.emotions.length)],
+      musicTrend: this.getCurrentMusicTrend()
+    };
+  }
+}

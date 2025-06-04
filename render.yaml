@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: viral-mcp
+    runtime: node
+    buildCommand: npm install
+    startCommand: node server.js
+    envVars:
+      - key: GROQ_API_KEY
+        value: YOUR_GROQ_KEY
+      - key: GOOGLE_CREDENTIALS
+        value: YOUR_GOOGLE_JSON
+    disk:
+      name: data-disk
+      mountPath: /app/sessions
+      sizeGB: 5
