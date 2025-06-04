@@ -1,0 +1,11 @@
+{
+  "claude": {
+    "email_input": "input[name='email']",
+    "password_input": "input[name='password']",
+    "prompt_textarea": "textarea#prompt-input"
+  },
+  "new_service": {
+    "login_button": ".auth-btn",
+    "prompt_field": "#ai-prompt"
+  }
+}
