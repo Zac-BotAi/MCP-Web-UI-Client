@@ -14,6 +14,7 @@ const TEMP_DIR = path.join(__dirname, 'temp');
 
 // Service registry with enhanced capabilities
 const serviceRegistry = {
+  webExtractor: { module: './services/webExtractor', type: 'local' }, // Added WebExtractorService
   groq: { module: './services/groq', type: 'api' },
   claude: { module: './services/claude', url: 'https://claude.ai' },
   gemini: { module: './services/gemini', url: 'https://gemini.google.com' },
@@ -113,6 +114,75 @@ class ViralContentSystem {
       posts
     };
   }
+
+  async createViralContentFromUrl(url, userId) { // userId is for future use
+    const contentId = uuidv4();
+
+    // Step 1: Extract text from URL
+    if (!this.services.webExtractor) {
+      throw new Error("WebExtractorService not loaded or available.");
+    }
+    const extractedText = await this.services.webExtractor.extractText(url);
+    if (!extractedText) {
+      throw new Error(`Failed to extract text from URL: ${url}`);
+    }
+
+    // Step 2: Content strategy with Groq using extracted text
+    // Passing a generic topic, and the extracted text as urlContent
+    const strategy = await this.services.groq.generateStrategy(
+      `Content strategy for URL: ${url}`,
+      extractedText
+    );
+
+    // Step 3: Media creation (mirroring createViralContent)
+    const assets = {
+      script: await this.services.claude.generateScript(strategy),
+      image: await this.services.runway.generateImage(strategy.visualPrompt),
+      audio: await this.services.elevenlabs.generateAudio(strategy.scriptSegment),
+      video: await this.services.runway.generateVideo(strategy) // Assuming runway can take the full strategy
+    };
+
+    // Step 4: Compile final content
+    const finalVideoPath = await this.services.canva.compileVideo({ // Assuming compileVideo returns a path directly
+      ...assets,
+      music: strategy.viralMusicPrompt,
+      title: strategy.title, // Pass title for Canva if needed
+      caption: strategy.caption // Pass caption for Canva if needed
+    });
+
+    // Step 5: Save to Drive
+    const driveResult = await this.uploadToDrive(
+      finalVideoPath, // Use the direct path from canva.compileVideo
+      `${strategy.title.replace(/[^a-zA-Z0-9]/g, '_')}-${contentId}.mp4` // Sanitize title for filename
+    );
+
+    // Step 6: Social distribution
+    const posts = {
+      youtube: await this.services.youtube.postContent({
+        videoPath: finalVideoPath,
+        title: strategy.title,
+        description: strategy.description,
+        tags: strategy.hashtags
+      }),
+      tiktok: await this.services.tiktok.postContent({
+        videoPath: finalVideoPath,
+        caption: strategy.caption,
+        tags: strategy.hashtags
+      }),
+      instagram: await this.services.instagram.postContent({
+        videoPath: finalVideoPath,
+        caption: strategy.caption,
+        tags: strategy.hashtags
+      })
+    };
+
+    return {
+      contentId,
+      strategy,
+      driveLink: driveResult.webViewLink,
+      posts
+    };
+  }
 }
 
 // Initialize system
@@ -124,24 +194,26 @@ app.post('/mcp/viral-content', async (req, res) => {
   const { id, method, params } = req.body;
   
   try {
-    if (method !== 'create_viral_content') {
+    let result;
+    if (method === 'create_viral_content' && params.topic) {
+      result = await viralSystem.createViralContent(params.topic);
+    } else if (method === 'create_viral_content_from_url' && params.url) {
+      // Assuming userId might come from session or a decoded token in a real app
+      // For now, passing null or a placeholder if not provided in params
+      result = await viralSystem.createViralContentFromUrl(params.url, params.userId || null);
+    } else {
+      let errorMessage = 'Method not found or missing required parameters.';
+      if (method === 'create_viral_content' && !params.topic) {
+        errorMessage = 'Missing topic parameter for create_viral_content.';
+      } else if (method === 'create_viral_content_from_url' && !params.url) {
+        errorMessage = 'Missing url parameter for create_viral_content_from_url.';
+      }
       return res.status(400).json({
         jsonrpc: '2.0',
-        error: { code: -32601, message: 'Method not found' },
+        error: { code: -32602, message: errorMessage },
         id
       });
     }
-    
-    const { topic } = params;
-    if (!topic) {
-      return res.status(400).json({
-        jsonrpc: '2.0',
-        error: { code: -32602, message: 'Missing topic parameter' },
-        id
-      });
-    }
-    
-    const result = await viralSystem.createViralContent(topic);
     
     res.json({
       jsonrpc: '2.0',
