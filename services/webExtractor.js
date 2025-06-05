@@ -1,4 +1,5 @@
 const playwright = require('playwright');
+const retry = require('async-retry');
 
 class WebExtractorService {
   constructor() {
@@ -25,17 +26,46 @@ class WebExtractorService {
       throw new Error('Playwright page not initialized.');
     }
 
-    try {
-      await this.page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 }); // 60 seconds timeout
-      const bodyText = await this.page.locator('body').innerText();
-      return bodyText;
-    } catch (error) {
-      console.error(`Error extracting text from ${url}:`, error);
-      // Return null or an empty string, or re-throw a custom error
-      // depending on how the caller should handle this.
-      // For now, returning null to indicate failure.
-      return null;
-    }
+    return retry(async (bail, attemptNumber) => {
+      try {
+        if (attemptNumber > 1) {
+          console.log(`Retrying text extraction from URL: ${url} (Attempt ${attemptNumber})`);
+        }
+        await this.page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 }); // 60 seconds timeout
+        const bodyText = await this.page.locator('body').innerText();
+        if (!bodyText || bodyText.trim() === '') {
+          // Consider if empty body text should be a retriable offense or a bail
+          // For now, let's assume it might be a temporary loading issue and retry.
+          // If it's consistently empty, it will eventually fail after retries.
+          console.warn(`Extracted empty text from ${url} on attempt ${attemptNumber}. Retrying if attempts remain.`);
+          throw new Error(`Extracted empty text from ${url}`);
+        }
+        return bodyText;
+      } catch (error) {
+        console.error(`Attempt ${attemptNumber} failed for ${url}: ${error.message}`);
+        // Example of bailing on a specific error type (adjust as needed for Playwright errors)
+        // if (error.message.includes('net::ERR_NAME_NOT_RESOLVED')) {
+        //   console.error(`URL ${url} could not be resolved. Bailing out.`);
+        //   bail(error);
+        //   return null; // bail doesn't return, but flow needs it.
+        // }
+
+        // For most playwright errors (timeout, navigation, etc.), we want to retry.
+        // So, we re-throw the error, and async-retry will handle the retry logic.
+        throw error;
+      }
+    }, {
+      retries: 3,
+      factor: 2,
+      minTimeout: 1000, // 1 second
+      maxTimeout: 5000, // 5 seconds
+      onRetry: (error, attemptNumber) => {
+        console.log(`Preparing for retry attempt ${attemptNumber} for ${url} due to: ${error.message}`);
+      }
+    }).catch(error => {
+      console.error(`Failed to extract text from URL: ${url} after multiple retries`, error);
+      return null; // Return null if all retries are exhausted
+    });
   }
 
   async close() {

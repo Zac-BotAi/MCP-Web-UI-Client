@@ -4,274 +4,162 @@ const { chromium } = require('playwright');
 const fs = require('fs').promises;
 const path = require('path');
 const axios = require('axios');
-const { google } = require('googleapis');
-const { v4: uuidv4 } = require('uuid');
+// server.js - Enhanced Viral Content MCP System
+const express = require('express');
+// const { chromium } = require('playwright'); // Playwright might not be needed directly in server.js anymore
+const fs = require('fs').promises;
+const path = require('path');
+// const axios = require('axios'); // If not used by other parts of server.js, can be removed
+// const { google } = require('googleapis'); // Moved to core/viralSystem.js
+// const { v4: uuidv4 } = require('uuid'); // Moved to core/viralSystem.js
+const contentCreationQueue = require('./lib/queue');
+const { ViralContentSystem } = require('./core/viralSystem'); // Import from new location
 
 const app = express();
 const port = 3000;
 const SESSION_DIR = path.join(__dirname, 'sessions');
-const TEMP_DIR = path.join(__dirname, 'temp');
+// const TEMP_DIR = path.join(__dirname, 'temp'); // TEMP_DIR is now managed within ViralContentSystem
 
-// Service registry with enhanced capabilities
-const serviceRegistry = {
-  webExtractor: { module: './services/webExtractor', type: 'local' }, // Added WebExtractorService
-  groq: { module: './services/groq', type: 'api' },
-  claude: { module: './services/claude', url: 'https://claude.ai' },
-  gemini: { module: './services/gemini', url: 'https://gemini.google.com' },
-  elevenlabs: { module: './services/elevenlabs', url: 'https://elevenlabs.io' },
-  runway: { module: './services/runway', url: 'https://runway.ml' },
-  canva: { module: './services/canva', url: 'https://canva.com' },
-  youtube: { module: './services/youtube', url: 'https://youtube.com' },
-  tiktok: { module: './services/tiktok', url: 'https://tiktok.com' },
-  instagram: { module: './services/instagram', url: 'https://instagram.com' }
-};
+// Service registry, loadService, initializeServices are removed as they are now in ViralContentSystem.
 
 // Middleware
 app.use(express.json());
 
-class ViralContentSystem {
-  constructor() {
-    this.services = {};
-    this.driveClient = null;
-  }
-  
-  async initialize() {
-    // Initialize Google Drive
-    this.driveClient = await this.authenticateGoogleDrive();
-    
-    // Create temp directory
-    await fs.mkdir(TEMP_DIR, { recursive: true });
-  }
-  
-  async authenticateGoogleDrive() {
-    const auth = new google.auth.GoogleAuth({
-      keyFile: 'credentials.json',
-      scopes: ['https://www.googleapis.com/auth/drive']
-    });
-    return google.drive({ version: 'v3', auth });
-  }
-  
-  async uploadToDrive(filePath, fileName) {
-    const media = { mimeType: 'application/octet-stream', body: fs.createReadStream(filePath) };
-    const res = await this.driveClient.files.create({
-      requestBody: { name: fileName, parents: ['root'] },
-      media,
-      fields: 'id, webViewLink'
-    });
-    return res.data;
-  }
-  
-  async createViralContent(topic) {
-    const contentId = uuidv4();
-    
-    // Step 1: Content strategy with Groq
-    const strategy = await this.services.groq.generateStrategy(topic);
-    
-    // Step 2: Media creation
-    const assets = {
-      script: await this.services.claude.generateScript(strategy),
-      image: await this.services.runway.generateImage(strategy.visualPrompt),
-      audio: await this.services.elevenlabs.generateAudio(strategy.scriptSegment),
-      video: await this.services.runway.generateVideo(strategy)
-    };
-    
-    // Step 3: Compile final content
-    const finalVideo = await this.services.canva.compileVideo({
-      ...assets,
-      music: strategy.viralMusicPrompt
-    });
-    
-    // Step 4: Save to Drive
-    const driveResult = await this.uploadToDrive(
-      finalVideo.path, 
-      `${strategy.title}-${contentId}.mp4`
-    );
-    
-    // Step 5: Social distribution
-    const posts = {
-      youtube: await this.services.youtube.postContent({
-        video: finalVideo.path,
-        title: strategy.title,
-        description: strategy.description,
-        tags: strategy.hashtags
-      }),
-      tiktok: await this.services.tiktok.postContent({
-        video: finalVideo.path,
-        caption: strategy.caption,
-        tags: strategy.hashtags
-      }),
-      instagram: await this.services.instagram.postContent({
-        video: finalVideo.path,
-        caption: strategy.caption,
-        tags: strategy.hashtags
-      })
-    };
-    
-    return {
-      contentId,
-      strategy,
-      driveLink: driveResult.webViewLink,
-      posts
-    };
-  }
+// ViralContentSystem class definition is removed from here.
 
-  async createViralContentFromUrl(url, userId) { // userId is for future use
-    const contentId = uuidv4();
+// Initialize system (ViralContentSystem instance for the server, if needed for other routes or direct use)
+// For a setup where all work is done by workers, this server-side instance might be minimal
+// or not used for createViralContent/createViralContentFromUrl.
+// However, the existing `start` function initializes and uses it for service cleanup.
+// So, we still need an instance, but its services are loaded differently.
+let viralSystem; // Declare to be initialized in start()
 
-    // Step 1: Extract text from URL
-    if (!this.services.webExtractor) {
-      throw new Error("WebExtractorService not loaded or available.");
-    }
-    const extractedText = await this.services.webExtractor.extractText(url);
-    if (!extractedText) {
-      throw new Error(`Failed to extract text from URL: ${url}`);
-    }
-
-    // Step 2: Content strategy with Groq using extracted text
-    // Passing a generic topic, and the extracted text as urlContent
-    const strategy = await this.services.groq.generateStrategy(
-      `Content strategy for URL: ${url}`,
-      extractedText
-    );
-
-    // Step 3: Media creation (mirroring createViralContent)
-    const assets = {
-      script: await this.services.claude.generateScript(strategy),
-      image: await this.services.runway.generateImage(strategy.visualPrompt),
-      audio: await this.services.elevenlabs.generateAudio(strategy.scriptSegment),
-      video: await this.services.runway.generateVideo(strategy) // Assuming runway can take the full strategy
-    };
-
-    // Step 4: Compile final content
-    const finalVideoPath = await this.services.canva.compileVideo({ // Assuming compileVideo returns a path directly
-      ...assets,
-      music: strategy.viralMusicPrompt,
-      title: strategy.title, // Pass title for Canva if needed
-      caption: strategy.caption // Pass caption for Canva if needed
-    });
-
-    // Step 5: Save to Drive
-    const driveResult = await this.uploadToDrive(
-      finalVideoPath, // Use the direct path from canva.compileVideo
-      `${strategy.title.replace(/[^a-zA-Z0-9]/g, '_')}-${contentId}.mp4` // Sanitize title for filename
-    );
-
-    // Step 6: Social distribution
-    const posts = {
-      youtube: await this.services.youtube.postContent({
-        videoPath: finalVideoPath,
-        title: strategy.title,
-        description: strategy.description,
-        tags: strategy.hashtags
-      }),
-      tiktok: await this.services.tiktok.postContent({
-        videoPath: finalVideoPath,
-        caption: strategy.caption,
-        tags: strategy.hashtags
-      }),
-      instagram: await this.services.instagram.postContent({
-        videoPath: finalVideoPath,
-        caption: strategy.caption,
-        tags: strategy.hashtags
-      })
-    };
-
-    return {
-      contentId,
-      strategy,
-      driveLink: driveResult.webViewLink,
-      posts
-    };
-  }
-}
-
-// Initialize system
-const viralSystem = new ViralContentSystem();
-viralSystem.initialize();
 
 // MCP Endpoint for viral content creation
 app.post('/mcp/viral-content', async (req, res) => {
-  const { id, method, params } = req.body;
-  
+  const { id: requestId, method, params } = req.body; // Renamed id to requestId for clarity
+
+  // Ensure params is an object if it's undefined, for safer access later
+  const safeParams = params || {};
+
   try {
-    let result;
-    if (method === 'create_viral_content' && params.topic) {
-      result = await viralSystem.createViralContent(params.topic);
-    } else if (method === 'create_viral_content_from_url' && params.url) {
-      // Assuming userId might come from session or a decoded token in a real app
-      // For now, passing null or a placeholder if not provided in params
-      result = await viralSystem.createViralContentFromUrl(params.url, params.userId || null);
-    } else {
-      let errorMessage = 'Method not found or missing required parameters.';
-      if (method === 'create_viral_content' && !params.topic) {
-        errorMessage = 'Missing topic parameter for create_viral_content.';
-      } else if (method === 'create_viral_content_from_url' && !params.url) {
-        errorMessage = 'Missing url parameter for create_viral_content_from_url.';
+    // Validate method and parameters first
+    if (method === 'create_viral_content') {
+      if (!safeParams.topic || typeof safeParams.topic !== 'string' || safeParams.topic.trim() === '') {
+        return res.status(400).json({
+          jsonrpc: '2.0',
+          error: { code: -32602, message: 'Invalid params: Missing or empty topic' },
+          id: requestId
+        });
       }
+    } else if (method === 'create_viral_content_from_url') {
+      if (!safeParams.url || typeof safeParams.url !== 'string' || safeParams.url.trim() === '') {
+        return res.status(400).json({
+          jsonrpc: '2.0',
+          error: { code: -32602, message: 'Invalid params: Missing or empty url' },
+          id: requestId
+        });
+      }
+    } else {
       return res.status(400).json({
         jsonrpc: '2.0',
-        error: { code: -32602, message: errorMessage },
-        id
+        error: { code: -32601, message: 'Method not found' },
+        id: requestId
       });
     }
-    
-    res.json({
-      jsonrpc: '2.0',
-      result,
-      id
-    });
+
+    // Prepare job data
+    const jobData = { ...safeParams, userId: safeParams.userId || null }; // Pass necessary params to the job
+                                                                      // 'method' will be the job name
+
+    // Add job to queue
+    try {
+      const job = await contentCreationQueue.add(method, jobData);
+      console.log(`Job ${job.id} added to queue ${method} with data:`, jobData);
+
+      // Respond with 202 Accepted
+      return res.status(202).json({
+        jsonrpc: '2.0',
+        result: {
+          status: 'pending',
+          jobId: job.id,
+          message: 'Content creation request accepted and queued.'
+        },
+        id: requestId
+      });
+
+    } catch (queueError) {
+      console.error(`Failed to add job to queue (${method}):`, queueError);
+      return res.status(503).json({ // Service Unavailable
+        jsonrpc: '2.0',
+        error: {
+          code: -32001, // Custom server error code for queue failure
+          message: 'Failed to queue content creation request. Please try again later.'
+        },
+        id: requestId
+      });
+    }
+
   } catch (error) {
-    console.error(`Viral content error: ${error.message}`);
+    // This main catch block now primarily handles unexpected errors
+    // or errors from the validation logic if any were missed (though they should return directly).
+    console.error(`Unexpected error in /mcp/viral-content endpoint: ${error.message}`, error);
     res.status(500).json({
       jsonrpc: '2.0',
-      error: { code: -32000, message: error.message },
-      id
+      error: { code: -32000, message: 'Internal server error.' }, // Generic message for unexpected errors
+      id: requestId
     });
   }
 });
 
-// Service loader
-async function loadService(name) {
-  if (viralSystem.services[name]) return viralSystem.services[name];
-  
-  const config = serviceRegistry[name];
-  if (!config) throw new Error(`Unsupported service: ${name}`);
-  
-  const Service = require(config.module);
-  const service = config.url ? 
-    new Service(name, config.url) : 
-    new Service();
-  
-  if (service.initialize) await service.initialize();
-  viralSystem.services[name] = service;
-  return service;
-}
-
-// Initialize services
-async function initializeServices() {
-  for (const name of Object.keys(serviceRegistry)) {
-    await loadService(name);
-  }
-}
+// Service loader and initializeServices are removed.
 
 // Start server
 async function start() {
   await fs.mkdir(SESSION_DIR, { recursive: true });
-  await initializeServices();
+
+  console.log('Initializing ViralContentSystem for server...');
+  viralSystem = new ViralContentSystem();
+  await viralSystem.initialize(); // Base initialization (Drive, TempDir)
+  await viralSystem.initialize_dependent_services(); // Initialize all dependent services
+  console.log('ViralContentSystem for server initialized successfully.');
   
   app.listen(port, () => {
     console.log(`Viral Content MCP running on port ${port}`);
-    console.log(`Supported services: ${Object.keys(serviceRegistry).join(', ')}`);
+    // The concept of "Supported services" from the old serviceRegistry might be logged differently now,
+    // perhaps by listing keys from viralSystem.services if needed.
+    // For now, removing the specific log about serviceRegistry.
   });
 }
 
 // Cleanup
 process.on('SIGINT', async () => {
   console.log('Shutting down...');
-  for (const service of Object.values(viralSystem.services)) {
-    if (service.close) await service.close();
+  if (viralSystem && viralSystem.services) {
+    for (const serviceName in viralSystem.services) {
+      const service = viralSystem.services[serviceName];
+      if (service && typeof service.close === 'function') {
+        try {
+          await service.close();
+          console.log(`Service ${serviceName} closed.`);
+        } catch (err) {
+          console.error(`Error closing service ${serviceName}:`, err);
+        }
+      }
+    }
   }
-  process.exit();
+  // Also close the queue connection if it's managed here or if the queue client needs explicit closing
+  if (contentCreationQueue && typeof contentCreationQueue.close === 'function') {
+    try {
+      await contentCreationQueue.close();
+      console.log('BullMQ contentCreationQueue closed.');
+    } catch (err) {
+      console.error('Error closing BullMQ queue:', err);
+    }
+  }
+  process.exit(0);
 });
 
 start();
+
+// module.exports = { ViralContentSystem }; // This line is removed.
