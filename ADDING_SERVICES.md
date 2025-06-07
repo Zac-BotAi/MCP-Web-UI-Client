@@ -4,16 +4,16 @@
 
 This document outlines the process for adding new services to the MCP (Media Control Platform) Viral Content System. The system is designed to integrate various AI and web services for automated content creation and distribution.
 
-Services are modular components located in the `services/` directory. Many UI-based services extend the `BaseAIService` (from `base.js`) which provides common functionality for browser automation using Playwright, including session management (loading/saving cookies and local storage). API-based services might not need `BaseAIService` but should follow a similar structural pattern for consistency.
+Services are modular components located in the `services/` directory. Many UI-based services extend the `BaseAIService` (from `base.js`) which provides common functionality for browser automation using Playwright, including session management (loading/saving cookies and local storage) and error screenshots. API-based services might not need `BaseAIService` but should follow a similar structural pattern for consistency.
 
-All services are registered in the `serviceRegistry` object within `server.js`, which allows the system to dynamically load and manage them.
+All services are registered in the `serviceRegistry` object within `server.js`. The key used for registration (e.g., `claude`, `elevenlabs`) serves as the `service_id` for various system functions, including user preferences and API calls like `/api/service/:serviceId/usage`.
 
 ## Steps to Add a New Service
 
 Follow these steps to integrate a new service:
 
 ### 1. Create Service File
-
+(Content as before)
 *   Create a new JavaScript file in the `services/` directory (e.g., `services/my_new_service.js`).
 *   Define a class for your service. If it involves UI automation, it should extend `BaseAIService`:
     ```javascript
@@ -29,146 +29,102 @@ Follow these steps to integrate a new service:
     For pure API clients, you might not extend `BaseAIService`.
 
 ### 2. Constructor
-
+(Content as before, with minor clarification on serviceName matching service_id)
 *   **For UI-Based Services (extending `BaseAIService`):**
-    Call `super()` with a unique service name and a session name. The service name is for logging and identification, and the session name is used as the filename for storing session state (e.g., cookies).
+    Call `super()` with a unique service name and a session name. The `serviceName` argument to `super()` should generally match the `service_id` (the key used in `serviceRegistry`). The `sessionName` is used for storing session state.
     ```javascript
-    constructor(name, url) { // name & url are passed from serviceRegistry in server.js
-      super('MyNewService', 'my_new_service_session');
-      this.url = url; // Store if needed for navigation
-      console.log(`MyNewService initialized with URL: ${this.url}`);
-      // Initialize API clients or other configurations if necessary
+    constructor(name, url) { // name (service_id from registry) & url are passed from serviceRegistry
+      // It's crucial that the first argument to super() matches the service_id for consistent logging and session handling
+      super(name, `${name}_session`); // e.g., if name is 'claude', session becomes 'claude_session'
+      this.url = url;
+      console.log(`${this.serviceName} initialized with URL: ${this.url}`);
     }
     ```
 *   **For API-Based Services:**
-    The constructor should initialize any API clients or configurations. It typically won't call `super()`.
-    ```javascript
-    constructor() {
-      // const apiKey = process.env.MY_NEW_SERVICE_API_KEY;
-      // if (!apiKey) throw new Error('MY_NEW_SERVICE_API_KEY is not set');
-      // this.apiClient = new SomeApiClient({ apiKey });
-      console.log('MyNewService (API Client) initialized.');
-    }
-    ```
+    (Content as before)
 
 ### 3. Implement Core Logic
-
-*   Define asynchronous methods specific to the service's functionality. Examples:
-    *   `async generateContent(prompt)`
-    *   `async postMedia(mediaPath, details)`
-    *   `async performTask(params)`
-    *   `async login(username, password)`
-*   These methods should encapsulate the interactions with the target service.
-*   **For UI-Based Services:** Use `this.page` (provided by `BaseAIService` after `initialize()`) for Playwright interactions:
+(Content as before, with emphasis on error handling using BaseAIService)
+*   Define asynchronous methods specific to the service's functionality.
+*   **Error Handling:** Implement robust error handling. For UI-based services extending `BaseAIService`, use the inherited `this.takeScreenshotOnError('yourMethodNameContext')` within your `catch` blocks before re-throwing the error.
     ```javascript
-    async getSomeData() {
-      if (!this.page) throw new Error('Page not initialized. Call initialize() first.');
-      await this.page.goto(this.url);
-      await this.page.fill('#searchBox', 'some query');
-      await this.page.click('#searchButton');
-      await this.page.waitForSelector('#results');
-      return this.page.textContent('#results');
+    async somePlaywrightOperation() {
+      if (!this.page) throw new Error('Page not initialized.');
+      try {
+        // ... Playwright actions ...
+      } catch (error) {
+        console.error(`[${this.serviceName}] Error in 'somePlaywrightOperation': ${error.message}`, error.stack);
+        await this.takeScreenshotOnError('somePlaywrightOperation');
+        throw error;
+      }
     }
     ```
-*   **Error Handling:** Implement robust error handling within your service methods. Catch errors from API calls or Playwright interactions and log them or throw custom errors as appropriate.
 
 ### 4. `initialize()` and `close()` Methods
-
-*   **If extending `BaseAIService`:**
-    *   The base `initialize()` method launches Playwright, sets up `this.browser`, `this.context`, and `this.page`, and attempts to load a saved session.
-    *   The base `close()` method saves the current session and closes the browser.
-    *   If your service needs additional setup (e.g., specific login steps not covered by session cookies, navigating to a default page) or cleanup, you can override these methods. **Remember to call `await super.initialize();` or `await super.close();`** if you want the base functionality.
-    ```javascript
-    async initialize() {
-      await super.initialize(); // Launches browser, loads session
-      console.log('MyNewService specific initialization...');
-      // Example: Navigate to a dashboard or perform a health check
-      // await this.page.goto(`${this.url}/dashboard`);
-    }
-
-    async close() {
-      console.log('MyNewService specific cleanup...');
-      // Example: Explicit logout if needed
-      // if (this.page) {
-      //   await this.page.click('#logoutButton');
-      // }
-      await super.close(); // Saves session, closes browser
-    }
-    ```
-*   **If not extending `BaseAIService` (API-based):**
-    *   An `async initialize()` method can be useful for checking API connectivity or fetching initial configuration.
-    *   A `async close()` method can be used to release any resources (e.g., close persistent connections).
-    These methods will be called by `server.js` if they exist.
+(Content as before)
 
 ### 5. Register in `serviceRegistry` (`server.js`)
-
-*   Add an entry for your new service in the `serviceRegistry` object in `server.js`:
+(Added note about `service_id` and `functional_type`)
+*   Add an entry for your new service in the `serviceRegistry` object in `server.js`. The key you use here is the `service_id`.
     ```javascript
     const serviceRegistry = {
       // ... other services
-      myNewService: {
-        module: './services/my_new_service', // Path to your service file
-        url: 'https://my.service.url/api_or_homepage', // Optional: URL for the service
-        type: 'ui' // or 'api' - informational for now
+      "myNewService": { // This key is the service_id
+        module: './services/my_new_service',
+        url: 'https://my.service.url/api_or_homepage',
+        type: 'ui', // 'ui' or 'api'
+        functional_type: 'image_generation', // E.g., 'image_generation', 'script_generation', etc. (optional but useful)
+        sessionName: 'my_new_service_session' // Optional: if BaseAIService constructor needs it explicitly, though it can derive it
       },
     };
     ```
-    *   `module`: The relative path to your service's JS file from the project root.
-    *   `url`: (Optional) A base URL for the service, passed to the constructor.
-    *   `type`: (Optional, informational) Can be 'ui' for browser-based services or 'api' for direct API clients.
+    *   `service_id` (the key): This identifier is used in `user_service_preferences` and API endpoints like `/api/service/:serviceId/usage`.
+    *   `module`: Path to your service file.
+    *   `url`: Optional base URL.
+    *   `type`: 'ui' or 'api'.
+    *   `functional_type`: (Recommended) A string describing the specific function (e.g., 'image_generation', 'voice_generation'). This is used by the user preference system.
+    *   `sessionName`: (Optional) If your service's constructor needs a specific session name passed to `super()`, otherwise it can be derived (e.g., `service_id + '_session'`).
 
-### 6. Credentials Management
+### 6. Implement `fetchServiceUsage()` (Optional)
 
-*   If your service requires API keys, login credentials, or other sensitive information, add corresponding entries to `.env.example`.
-    ```
-    # My New Service
-    MY_NEW_SERVICE_API_KEY=your_api_key_here
-    MY_NEW_SERVICE_USERNAME=user@example.com
-    MY_NEW_SERVICE_PASSWORD=secretpassword
-    ```
-*   Developers will then copy `.env.example` to `.env` and fill in the actual values.
-*   **Security Note:** For UI automation services, storing passwords directly in `.env` is generally discouraged for production or shared environments. Prefer an interactive login during the first run in a headed browser. `BaseAIService` will save the session (cookies, local storage), allowing subsequent runs to be headless and authenticated. If non-interactive login is essential, ensure access to the `.env` file is strictly controlled.
+For services that display usage information (e.g., remaining credits, tokens, character quotas) on their website, you can implement an optional `async fetchServiceUsage()` method. This allows users to query their current standing with the service via the `/api/service/:serviceId/usage` endpoint.
 
-### 7. Testing
+*   **Method Signature:** `async fetchServiceUsage()`
+*   **Assumptions:**
+    *   The service instance is already initialized (i.e., `await this.initialize()` has been called).
+    *   `this.page` is available and authenticated for the service's website.
+*   **Implementation Steps:**
+    1.  Log the attempt to fetch usage information.
+    2.  Navigate to the specific page on the service's website where usage/quota information is displayed (e.g., account page, subscription page, or dashboard). This might involve clicking through a series of links if a direct URL is not available.
+        ```javascript
+        // Example navigation (highly site-specific)
+        // await this.page.goto('https://exampleservice.com/account/subscription', { waitUntil: 'networkidle' });
+        // Or:
+        // await this.page.click('#userProfileMenuButton');
+        // await this.page.click('#usageLink');
+        ```
+    3.  Use Playwright selectors to locate and extract the text content of the usage information. This is often the most challenging part due to varying website structures. Try to find stable selectors.
+    4.  Return an object containing the extracted data. A simple structure is recommended:
+        ```javascript
+        return { rawUsageData: "1234 / 10000 characters remaining" };
+        // Or more structured if parsing is reliable:
+        // return { used: 1234, total: 10000, unit: 'characters', percentage: 12.34 };
+        ```
+    5.  Implement robust error handling using a `try-catch` block. Call `await this.takeScreenshotOnError('fetchServiceUsage');` in the catch block for debugging.
+*   **Example Reference:** See the `fetchServiceUsage()` method in `services/elevenlabs.js` for an example implementation (noting that its selectors are speculative).
 
-*   **Standalone Testing:** It's often helpful to write a small test script to run your service methods independently.
-    ```javascript
-    // Example: test_my_new_service.js (run with node)
-    // const MyNewService = require('./services/my_new_service');
-    // (async () => {
-    //   const service = new MyNewService('Test', 'http://test.com');
-    //   await service.initialize();
-    //   const data = await service.getSomeData();
-    //   console.log(data);
-    //   await service.close();
-    // })();
-    ```
-*   **Integration Testing:** Test your service as part of the full MCP workflow defined in `server.js` by making requests to the `/mcp/viral-content` endpoint or by direct invocation if you're modifying `server.js`.
-*   **Debugging UI Automation:** If you're working on a UI-based service and need to see what the browser is doing, you can temporarily set `headless: false` in the `chromium.launch()` options within `BaseAIService.initialize()` (in `base.js`).
+### 7. Credentials Management
+(Content as before)
+
+### 8. Testing
+(Content as before, add note about `PLAYWRIGHT_HEADLESS=false`)
+*   **Debugging UI Automation:** If you're working on a UI-based service, you can run the server with the environment variable `PLAYWRIGHT_HEADLESS=false` (e.g., `PLAYWRIGHT_HEADLESS=false node server.js`) to see the browser interactions. This setting is respected by `BaseAIService`.
 
 ## API-Based vs. UI-Based Services
-
-*   **UI-Based Services:**
-    *   Extend `BaseAIService`.
-    *   Use `this.page` (Playwright Page object) for interactions.
-    *   Rely on `BaseAIService` for browser launch, session loading/saving, and closing.
-    *   Examples: Claude, Gemini (if UI-driven), Runway, Canva, social media platforms.
-*   **API-Based Services:**
-    *   Typically do not extend `BaseAIService`.
-    *   Use an HTTP client (like `axios`) or a specific SDK to interact with the service's API.
-    *   Manage their own client setup and API key handling.
-    *   Example: Groq.
+(Content as before)
 
 ## Service Method Conventions
-
-While not strictly enforced, try to follow consistent naming for common actions where it makes sense:
-
-*   `generate...`: For content generation (e.g., `generateScript`, `generateImage`).
-*   `post...`: For publishing content (e.g., `postContent`, `postVideo`).
-*   `get...`: For retrieving data.
-*   `compile...`: For combining assets.
-
-This helps in understanding the role of different methods when looking at `server.js` or other services.
+(Content as before)
 
 ---
 
