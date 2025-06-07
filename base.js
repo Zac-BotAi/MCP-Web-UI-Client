@@ -2,60 +2,86 @@ const { chromium } = require('playwright');
 const fs = require('fs').promises;
 const path = require('path');
 
+// Define TEMP_DIR at the project root level (since base.js is in the root)
+const TEMP_DIR = path.join(__dirname, 'temp');
+
 class BaseAIService {
   constructor(serviceName, sessionName) {
     this.serviceName = serviceName;
     this.sessionName = sessionName;
     this.browser = null;
     this.page = null;
-    this.context = null; // Added for storing context
+    this.context = null;
   }
 
   async initialize() {
-    this.browser = await chromium.launch({ headless: true });
+    const headless = process.env.PLAYWRIGHT_HEADLESS !== 'false'; // Defaults to true
+    console.log(`[${this.serviceName}] Initializing browser (headless: ${headless})...`);
+
+    this.browser = await chromium.launch({ headless });
 
     const contextOptions = {};
-    const sessionPath = path.join(__dirname, 'sessions', this.sessionName + '.json');
+    const sessionDir = path.join(__dirname, 'sessions'); // sessions dir in project root
+    await fs.mkdir(sessionDir, { recursive: true }); // Ensure sessions directory exists
+    const sessionPath = path.join(sessionDir, this.sessionName + '.json');
 
     try {
-      await fs.mkdir(path.join(__dirname, 'sessions'), { recursive: true }); // Ensure sessions directory exists
       const sessionData = await fs.readFile(sessionPath, 'utf-8');
       const parsedSession = JSON.parse(sessionData);
       if (parsedSession && Object.keys(parsedSession).length) {
         contextOptions.storageState = sessionPath;
-        console.log(`Attempting to load session for ${this.serviceName} from ${sessionPath}`);
+        console.log(`[${this.serviceName}] Attempting to load session from ${sessionPath}`);
       }
     } catch (error) {
-      // Log if session file doesn't exist or is invalid, but don't treat as fatal for initialization
       if (error.code === 'ENOENT') {
-        console.log(`No session file found for ${this.serviceName} at ${sessionPath}. A new session will be created.`);
+        console.log(`[${this.serviceName}] No session file found at ${sessionPath}. A new session will be created.`);
       } else {
-        console.log(`Error loading session for ${this.serviceName}: ${error.message}. A new session will be created.`);
+        console.log(`[${this.serviceName}] Error loading session from ${sessionPath}: ${error.message}. A new session will be created.`);
       }
     }
 
     this.context = await this.browser.newContext(contextOptions);
     this.page = await this.context.newPage();
-    console.log(`${this.serviceName} initialized with browser and page.`);
+    console.log(`[${this.serviceName}] ${this.serviceName} initialized with browser and page.`);
+  }
+
+  async takeScreenshotOnError(errorContextName) {
+    if (this.page) {
+      try {
+        await fs.mkdir(TEMP_DIR, { recursive: true }); // TEMP_DIR is now defined at the top of base.js
+        const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+        const screenshotPath = path.join(TEMP_DIR, `ERROR_${this.serviceName}_${errorContextName}_${timestamp}.png`);
+        await this.page.screenshot({ path: screenshotPath, fullPage: true });
+        console.log(`[${this.serviceName}] Screenshot taken on error: ${screenshotPath}`);
+        return screenshotPath;
+      } catch (ssError) {
+        console.error(`[${this.serviceName}] Failed to take screenshot: ${ssError.message}`);
+        return null;
+      }
+    }
+    console.log(`[${this.serviceName}] Page not available, cannot take screenshot.`);
+    return null;
   }
 
   async close() {
     if (this.context) {
       try {
-        const sessionPath = path.join(__dirname, 'sessions', this.sessionName + '.json');
-        await fs.mkdir(path.join(__dirname, 'sessions'), { recursive: true });
+        const sessionDir = path.join(__dirname, 'sessions');
+        await fs.mkdir(sessionDir, { recursive: true });
+        const sessionPath = path.join(sessionDir, this.sessionName + '.json');
         const storageState = await this.context.storageState();
         await fs.writeFile(sessionPath, JSON.stringify(storageState, null, 2));
-        console.log(`Session saved for ${this.serviceName} to ${sessionPath}`);
+        console.log(`[${this.serviceName}] Session saved to ${sessionPath}`);
       } catch (error) {
-        console.error(`Failed to save session for ${this.serviceName}: ${error.message}`);
+        console.error(`[${this.serviceName}] Failed to save session to ${this.sessionName}.json: ${error.message}`);
       }
     }
 
     if (this.browser) {
       await this.browser.close();
+      console.log(`[${this.serviceName}] Browser closed.`);
     }
-    console.log(`${this.serviceName} closed.`);
+    console.log(`[${this.serviceName}] ${this.serviceName} closed.`);
   }
 }
 
