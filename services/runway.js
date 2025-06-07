@@ -17,8 +17,8 @@ class RunwayService extends BaseAIService {
   // initialize() is inherited from BaseAIService
   // close() is inherited from BaseAIService
 
-  async generateImage(imagePrompt) {
-    console.log(`[${this.serviceName}] Starting image generation for prompt: "${imagePrompt.substring(0, 50)}..."`);
+  async generateImage(imagePrompt, aspectRatio = null) { // Added aspectRatio parameter
+    console.log(`[${this.serviceName}] Starting image generation for prompt: "${imagePrompt.substring(0, 50)}...", Aspect Ratio: \${aspectRatio || 'default'}`);
     if (!this.page) {
       throw new Error("Playwright page is not initialized. Call initialize() first.");
     }
@@ -35,6 +35,20 @@ class RunwayService extends BaseAIService {
       await this.page.waitForSelector(promptInputSelector, { timeout: 20000 });
       await this.page.fill(promptInputSelector, imagePrompt);
       console.log(`[${this.serviceName}] Image prompt filled.`);
+
+      if (aspectRatio) {
+        console.log(`[${this.serviceName}] Attempting to set aspect ratio to: \${aspectRatio} (conceptual for Runway).`);
+        // Example speculative logic (needs verification against Runway's actual UI):
+        // const aspectRatioDropdown = await this.page.$('button[aria-label*="Aspect Ratio"]');
+        // if (aspectRatioDropdown) {
+        //   await aspectRatioDropdown.click();
+        //   await this.page.click(`div[role="menuitemradio"][data-value="\${aspectRatio}"]`); // Assuming data-value format
+        //   console.log(\`[\${this.serviceName}] Aspect ratio '\${aspectRatio}' selected conceptually.\`);
+        // } else {
+        //   console.warn(\`[\${this.serviceName}] Aspect ratio control not found or not implemented for Runway.\`);
+        // }
+        console.warn(\`[\${this.serviceName}] Aspect ratio control logic is speculative and needs implementation based on RunwayML's UI.\`);
+      }
 
       const generateButtonSelector = 'button:has-text("Generate")';
       console.log(`[${this.serviceName}] Waiting for image generate button: ${generateButtonSelector}`);
