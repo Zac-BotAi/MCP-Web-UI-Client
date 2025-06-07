@@ -16,18 +16,15 @@ const TEMP_DIR = path.join(__dirname, 'temp');
 
 // Service registry with enhanced capabilities
 const serviceRegistry = {
-  groq: { module: './services/groq', type: 'api' },
-  claude: { module: './services/claude', url: 'https://claude.ai', functional_type: 'script_generation', sessionName: 'claude_session' },
-  gemini: { module: './services/gemini', url: 'https://gemini.google.com', functional_type: 'script_generation', sessionName: 'gemini_session' }, // Assuming Gemini is also for scripts
-  elevenlabs: { module: './services/elevenlabs', url: 'https://elevenlabs.io', functional_type: 'audio_generation', sessionName: 'elevenlabs_session' },
+  groq: { module: './services/groq', type: 'api', functional_type: 'strategy_generation' },
+  claude: { module: './services/claude', url: 'https://claude.ai', type: 'ui', functional_type: 'script_generation', sessionName: 'claude_session' },
+  gemini: { module: './services/gemini', url: 'https://gemini.google.com', type: 'ui', functional_type: 'script_generation', sessionName: 'gemini_session' },
+  elevenlabs: { module: './services/elevenlabs', url: 'https://elevenlabs.io', type: 'ui', functional_type: 'audio_generation', sessionName: 'elevenlabs_session' },
   runway: {
     module: './services/runway',
     url: 'https://runway.ml',
-    // Runway can do both, user might prefer it for one or the other.
-    // For default assignment, we might list it primarily as one or have specific sub-services if UI differs vastly.
-    // For now, let's assume user preferences will distinguish if they want runway for images vs video clips.
-    // The getPreferredService logic uses distinct 'service_type' strings.
-    functional_type: 'image_generation video_clip_generation', // Could be an array or space-separated string
+    type: 'ui',
+    functional_type: ['image_generation', 'video_clip_generation'], // Array for multiple types
     sessionName: 'runway_session'
   },
   raphaelai: {
@@ -50,6 +47,13 @@ const serviceRegistry = {
     type: 'ui',
     functional_type: 'audio_generation',
     sessionName: 'speechify_session'
+  },
+  veedio: {
+    module: './services/veedio_service',
+    url: 'https://www.veed.io/tools/ai-video',
+    type: 'ui',
+    functional_type: 'video_generation',
+    sessionName: 'veedio_session'
   },
   canva: { module: './services/canva', url: 'https://canva.com', type: 'ui', functional_type: 'video_compilation', sessionName: 'canva_session' },
   youtube: { module: './services/youtube', url: 'https://youtube.com', type: 'ui', functional_type: 'social_distribution_youtube', sessionName: 'youtube_session' },
@@ -154,14 +158,15 @@ class ViralContentSystem {
     return serviceToUseId;
   }
 
-  async createViralContent(topic, userId = null) { // Added userId parameter
+  async createViralContent(topic, userId = null, clientParams = {}) { // Added clientParams for aspect ratio etc.
     const contentId = uuidv4();
     const userLogPrefix = userId ? `[User:\${userId.substring(0,8)}]` : `[System]`;
-    console.log(\`\${userLogPrefix} --- Starting createViralContent for topic: ${topic} --- ${contentId}\`);
+    const aspectRatio = clientParams.aspectRatio; // Extract aspect ratio
+    console.log(\`\${userLogPrefix} --- Starting createViralContent for topic: ${topic}, AspectRatio: \${aspectRatio || 'default'} --- ${contentId}\`);
     
     // Step 1: Content strategy
     const strategyServiceId = await this.getPreferredService(userId, 'strategy_generation', 'groq');
-    const strategyService = await loadService(strategyServiceId); // Assuming loadService handles this correctly
+    const strategyService = await loadService(strategyServiceId);
     console.log(\`\${userLogPrefix} [\${contentId}] [ViralWorkflow] Step 1: Generating content strategy with \${strategyServiceId}...\`);
     const strategy = await strategyService.generateStrategy(topic);
     console.log(\`\${userLogPrefix} [\${contentId}] [ViralWorkflow] Strategy generated successfully with \${strategyServiceId}.\`);
@@ -175,10 +180,10 @@ class ViralContentSystem {
     const script = await scriptService.generateScript(strategy);
     console.log(\`\${userLogPrefix} [\${contentId}] [ViralWorkflow] Script generated with \${scriptServiceId}: ${script.substring(0, 50)}...\`);
 
-    const imageServiceId = await this.getPreferredService(userId, 'image_generation', 'runway');
+    const imageServiceId = await this.getPreferredService(userId, 'image_generation', 'runway'); // Default can be runway
     const imageService = await loadService(imageServiceId);
-    console.log(\`\${userLogPrefix} [\${contentId}] [ViralWorkflow] Step 2b: Generating image with \${imageServiceId}...\`);
-    const image = await imageService.generateImage(strategy.visualPrompt);
+    console.log(\`\${userLogPrefix} [\${contentId}] [ViralWorkflow] Step 2b: Generating image with \${imageServiceId} (Aspect: \${aspectRatio || 'default'})...\`);
+    const image = await imageService.generateImage(strategy.visualPrompt, aspectRatio); // Pass aspectRatio
     console.log(\`\${userLogPrefix} [\${contentId}] [ViralWorkflow] Image generated with \${imageServiceId}: ${image.path}`);
 
     const audioServiceId = await this.getPreferredService(userId, 'audio_generation', 'elevenlabs');
@@ -325,7 +330,8 @@ app.post('/mcp/viral-content', authMiddleware, async (req, res) => {
     }
     
     // Potential future use of req.user:
-    const result = await viralSystem.createViralContent(topic, req.user.id); // Pass userId here
+    const { topic, aspectRatio } = params; // Extract aspectRatio here
+    const result = await viralSystem.createViralContent(topic, req.user.id, { aspectRatio }); // Pass clientParams object
     
     res.json({
       jsonrpc: '2.0',
