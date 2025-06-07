@@ -1,6 +1,13 @@
 const { BaseAIService } = require('../base');
 
 class YouTubeService extends BaseAIService {
+  constructor(name, url) { // name and url are passed by server.js
+    super('YouTubeService', 'youtube_session'); // Use specific names for BaseAIService
+    // 'name' and 'url' from server.js are not strictly needed by BaseAIService itself
+    // but good to acknowledge they are passed. We use fixed names for session handling.
+    console.log(`Stub ${this.serviceName} service initialized for URL: ${url}`); // Optional: keep similar logging
+  }
+
   async postContent({ video, title, description, tags }) {
     await this.page.goto('https://studio.youtube.com', { waitUntil: 'networkidle' });
     

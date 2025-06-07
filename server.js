@@ -8,7 +8,7 @@ const { google } = require('googleapis');
 const { v4: uuidv4 } = require('uuid');
 
 const app = express();
-const port = 3000;
+const PORT = process.env.PORT || 3000; // Use PORT from environment or default to 3000
 const SESSION_DIR = path.join(__dirname, 'sessions');
 const TEMP_DIR = path.join(__dirname, 'temp');
 
@@ -35,18 +35,34 @@ class ViralContentSystem {
   }
   
   async initialize() {
+    console.log('ViralContentSystem initializing...');
     // Initialize Google Drive
     this.driveClient = await this.authenticateGoogleDrive();
+    console.log('Google Drive client authenticated.');
     
     // Create temp directory
     await fs.mkdir(TEMP_DIR, { recursive: true });
+    console.log('Temp directory created.');
+    console.log('ViralContentSystem initialized successfully.');
   }
   
   async authenticateGoogleDrive() {
-    const auth = new google.auth.GoogleAuth({
-      keyFile: 'credentials.json',
-      scopes: ['https://www.googleapis.com/auth/drive']
-    });
+    const authOptions = { scopes: ['https://www.googleapis.com/auth/drive'] };
+    if (process.env.GOOGLE_CREDENTIALS) {
+      try {
+        const credentials = JSON.parse(process.env.GOOGLE_CREDENTIALS);
+        authOptions.credentials = credentials;
+        console.log('Using GOOGLE_CREDENTIALS environment variable for Google Drive authentication.');
+      } catch (e) {
+        console.error('Failed to parse GOOGLE_CREDENTIALS. Falling back to keyFile. Error:', e.message);
+        authOptions.keyFile = 'credentials.json';
+        console.log('Using credentials.json for Google Drive authentication (failed to parse GOOGLE_CREDENTIALS).');
+      }
+    } else {
+      authOptions.keyFile = 'credentials.json';
+      console.log('Using credentials.json for Google Drive authentication (GOOGLE_CREDENTIALS not set).');
+    }
+    const auth = new google.auth.GoogleAuth(authOptions);
     return google.drive({ version: 'v3', auth });
   }
   
@@ -62,53 +78,85 @@ class ViralContentSystem {
   
   async createViralContent(topic) {
     const contentId = uuidv4();
+    console.log(`--- Starting createViralContent for topic: ${topic} --- ${contentId}`);
     
     // Step 1: Content strategy with Groq
+    console.log(`[${contentId}] [ViralWorkflow] Step 1: Generating content strategy with Groq...`);
     const strategy = await this.services.groq.generateStrategy(topic);
+    console.log(`[${contentId}] [ViralWorkflow] Strategy generated successfully.`);
     
     // Step 2: Media creation
-    const assets = {
-      script: await this.services.claude.generateScript(strategy),
-      image: await this.services.runway.generateImage(strategy.visualPrompt),
-      audio: await this.services.elevenlabs.generateAudio(strategy.scriptSegment),
-      video: await this.services.runway.generateVideo(strategy)
-    };
+    console.log(`[${contentId}] [ViralWorkflow] Step 2: Generating media assets...`);
+    console.log(`[${contentId}] [ViralWorkflow] Step 2a: Generating script with Claude...`);
+    const script = await this.services.claude.generateScript(strategy);
+    console.log(`[${contentId}] [ViralWorkflow] Script generated: ${script.substring(0, 50)}...`);
+
+    console.log(`[${contentId}] [ViralWorkflow] Step 2b: Generating image with Runway...`);
+    const image = await this.services.runway.generateImage(strategy.visualPrompt);
+    console.log(`[${contentId}] [ViralWorkflow] Image generated: ${image.path}`);
+
+    console.log(`[${contentId}] [ViralWorkflow] Step 2c: Generating audio with ElevenLabs...`);
+    const audio = await this.services.elevenlabs.generateAudio(strategy.scriptSegment);
+    console.log(`[${contentId}] [ViralWorkflow] Audio generated: ${audio.path}`);
+
+    console.log(`[${contentId}] [ViralWorkflow] Step 2d: Generating video with Runway...`);
+    const video = await this.services.runway.generateVideo(strategy);
+    console.log(`[${contentId}] [ViralWorkflow] Video generated: ${video.path}`);
+
+    const assets = { script, image, audio, video };
+    console.log(`[${contentId}] [ViralWorkflow] All media assets generated.`);
     
     // Step 3: Compile final content
+    console.log(`[${contentId}] [ViralWorkflow] Step 3: Compiling final content with Canva...`);
     const finalVideo = await this.services.canva.compileVideo({
       ...assets,
       music: strategy.viralMusicPrompt
     });
+    console.log(`[${contentId}] [ViralWorkflow] Final video compiled: ${finalVideo.path}`);
     
     // Step 4: Save to Drive
+    console.log(`[${contentId}] [ViralWorkflow] Step 4: Saving to Google Drive...`);
     const driveResult = await this.uploadToDrive(
       finalVideo.path, 
       `${strategy.title}-${contentId}.mp4`
     );
+    console.log(`[${contentId}] [ViralWorkflow] Saved to Google Drive. Link: ${driveResult.webViewLink}`);
     
     // Step 5: Social distribution
-    const posts = {
-      youtube: await this.services.youtube.postContent({
-        video: finalVideo.path,
-        title: strategy.title,
-        description: strategy.description,
-        tags: strategy.hashtags
-      }),
-      tiktok: await this.services.tiktok.postContent({
-        video: finalVideo.path,
-        caption: strategy.caption,
-        tags: strategy.hashtags
-      }),
-      instagram: await this.services.instagram.postContent({
-        video: finalVideo.path,
-        caption: strategy.caption,
-        tags: strategy.hashtags
-      })
-    };
+    console.log(`[${contentId}] [ViralWorkflow] Step 5: Distributing to social platforms...`);
+    const posts = {};
+
+    console.log(`[${contentId}] [ViralWorkflow] Step 5a: Posting to YouTube...`);
+    posts.youtube = await this.services.youtube.postContent({
+      video: finalVideo.path,
+      title: strategy.title,
+      description: strategy.description,
+      tags: strategy.hashtags
+    });
+    console.log(`[${contentId}] [ViralWorkflow] YouTube post successful. Post ID: ${posts.youtube.postId || posts.youtube}`); // Adjusted for actual return
+
+    console.log(`[${contentId}] [ViralWorkflow] Step 5b: Posting to TikTok...`);
+    posts.tiktok = await this.services.tiktok.postContent({
+      video: finalVideo.path,
+      caption: strategy.caption,
+      tags: strategy.hashtags
+    });
+    console.log(`[${contentId}] [ViralWorkflow] TikTok post successful. Post ID: ${posts.tiktok.postId}`);
+
+    console.log(`[${contentId}] [ViralWorkflow] Step 5c: Posting to Instagram...`);
+    posts.instagram = await this.services.instagram.postContent({
+      video: finalVideo.path,
+      caption: strategy.caption,
+      tags: strategy.hashtags
+    });
+    console.log(`[${contentId}] [ViralWorkflow] Instagram post successful. Post ID: ${posts.instagram.postId}`);
+
+    console.log(`[${contentId}] [ViralWorkflow] Social distribution completed.`);
+    console.log(`--- Finished createViralContent for topic: ${topic}. Content ID: ${contentId} ---`);
     
     return {
       contentId,
-      strategy,
+      strategy, // Consider removing this from final return if too large
       driveLink: driveResult.webViewLink,
       posts
     };
@@ -149,7 +197,8 @@ app.post('/mcp/viral-content', async (req, res) => {
       id
     });
   } catch (error) {
-    console.error(`Viral content error: ${error.message}`);
+    const { topic } = params || {}; // Ensure topic is available for logging, even if params is undefined
+    console.error(`[ERROR] Viral content creation failed for topic '${topic}' (Request ID: ${id}):`, error);
     res.status(500).json({
       jsonrpc: '2.0',
       error: { code: -32000, message: error.message },
@@ -165,21 +214,29 @@ async function loadService(name) {
   const config = serviceRegistry[name];
   if (!config) throw new Error(`Unsupported service: ${name}`);
   
+  console.log(`Loading service module: ${name} from ${config.module}`);
   const Service = require(config.module);
   const service = config.url ? 
     new Service(name, config.url) : 
     new Service();
+  console.log(`Service ${name} instantiated.`);
   
-  if (service.initialize) await service.initialize();
+  if (service.initialize) {
+    console.log(`Initializing service: ${name}...`);
+    await service.initialize();
+    console.log(`Service ${name} initialized successfully.`);
+  }
   viralSystem.services[name] = service;
   return service;
 }
 
 // Initialize services
 async function initializeServices() {
+  console.log('Initializing all services...');
   for (const name of Object.keys(serviceRegistry)) {
     await loadService(name);
   }
+  console.log('All services initialized.');
 }
 
 // Start server
@@ -187,8 +244,8 @@ async function start() {
   await fs.mkdir(SESSION_DIR, { recursive: true });
   await initializeServices();
   
-  app.listen(port, () => {
-    console.log(`Viral Content MCP running on port ${port}`);
+  app.listen(PORT, () => { // Use capitalized PORT here
+    console.log(`Viral Content MCP running on port ${PORT}`);
     console.log(`Supported services: ${Object.keys(serviceRegistry).join(', ')}`);
   });
 }
