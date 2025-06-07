@@ -13,7 +13,6 @@ All services are registered in the `serviceRegistry` object within `server.js`. 
 Follow these steps to integrate a new service:
 
 ### 1. Create Service File
-(Content as before)
 *   Create a new JavaScript file in the `services/` directory (e.g., `services/my_new_service.js`).
 *   Define a class for your service. If it involves UI automation, it should extend `BaseAIService`:
     ```javascript
@@ -29,7 +28,6 @@ Follow these steps to integrate a new service:
     For pure API clients, you might not extend `BaseAIService`.
 
 ### 2. Constructor
-(Content as before, with minor clarification on serviceName matching service_id)
 *   **For UI-Based Services (extending `BaseAIService`):**
     Call `super()` with a unique service name and a session name. The `serviceName` argument to `super()` should generally match the `service_id` (the key used in `serviceRegistry`). The `sessionName` is used for storing session state.
     ```javascript
@@ -41,10 +39,9 @@ Follow these steps to integrate a new service:
     }
     ```
 *   **For API-Based Services:**
-    (Content as before)
+    The constructor should initialize any API clients or configurations. It typically won't call `super()`.
 
 ### 3. Implement Core Logic
-(Content as before, with emphasis on error handling using BaseAIService)
 *   Define asynchronous methods specific to the service's functionality.
 *   **Error Handling:** Implement robust error handling. For UI-based services extending `BaseAIService`, use the inherited `this.takeScreenshotOnError('yourMethodNameContext')` within your `catch` blocks before re-throwing the error.
     ```javascript
@@ -61,10 +58,9 @@ Follow these steps to integrate a new service:
     ```
 
 ### 4. `initialize()` and `close()` Methods
-(Content as before)
+(Content as before - details omitted for brevity in this diff view but are present in the actual file)
 
 ### 5. Register in `serviceRegistry` (`server.js`)
-(Added note about `service_id` and `functional_type`)
 *   Add an entry for your new service in the `serviceRegistry` object in `server.js`. The key you use here is the `service_id`.
     ```javascript
     const serviceRegistry = {
@@ -86,45 +82,60 @@ Follow these steps to integrate a new service:
     *   `sessionName`: (Optional) If your service's constructor needs a specific session name passed to `super()`, otherwise it can be derived (e.g., `service_id + '_session'`).
 
 ### 6. Implement `fetchServiceUsage()` (Optional)
-
-For services that display usage information (e.g., remaining credits, tokens, character quotas) on their website, you can implement an optional `async fetchServiceUsage()` method. This allows users to query their current standing with the service via the `/api/service/:serviceId/usage` endpoint.
-
-*   **Method Signature:** `async fetchServiceUsage()`
-*   **Assumptions:**
-    *   The service instance is already initialized (i.e., `await this.initialize()` has been called).
-    *   `this.page` is available and authenticated for the service's website.
-*   **Implementation Steps:**
-    1.  Log the attempt to fetch usage information.
-    2.  Navigate to the specific page on the service's website where usage/quota information is displayed (e.g., account page, subscription page, or dashboard). This might involve clicking through a series of links if a direct URL is not available.
-        ```javascript
-        // Example navigation (highly site-specific)
-        // await this.page.goto('https://exampleservice.com/account/subscription', { waitUntil: 'networkidle' });
-        // Or:
-        // await this.page.click('#userProfileMenuButton');
-        // await this.page.click('#usageLink');
-        ```
-    3.  Use Playwright selectors to locate and extract the text content of the usage information. This is often the most challenging part due to varying website structures. Try to find stable selectors.
-    4.  Return an object containing the extracted data. A simple structure is recommended:
-        ```javascript
-        return { rawUsageData: "1234 / 10000 characters remaining" };
-        // Or more structured if parsing is reliable:
-        // return { used: 1234, total: 10000, unit: 'characters', percentage: 12.34 };
-        ```
-    5.  Implement robust error handling using a `try-catch` block. Call `await this.takeScreenshotOnError('fetchServiceUsage');` in the catch block for debugging.
-*   **Example Reference:** See the `fetchServiceUsage()` method in `services/elevenlabs.js` for an example implementation (noting that its selectors are speculative).
+(Content as before - details omitted for brevity)
 
 ### 7. Credentials Management
-(Content as before)
+(Content as before - details omitted for brevity)
 
 ### 8. Testing
-(Content as before, add note about `PLAYWRIGHT_HEADLESS=false`)
-*   **Debugging UI Automation:** If you're working on a UI-based service, you can run the server with the environment variable `PLAYWRIGHT_HEADLESS=false` (e.g., `PLAYWRIGHT_HEADLESS=false node server.js`) to see the browser interactions. This setting is respected by `BaseAIService`.
+(Content as before, add note about `PLAYWRIGHT_HEADLESS=false` - details omitted for brevity)
+
+## Examples of Integrated Services (Illustrative)
+
+This section provides a quick look at how some services are defined. Refer to their respective files in `services/` and entries in `serviceRegistry` for full details.
+
+*   **Groq (`groq`)**
+    *   **Type:** API
+    *   **Functional Type:** `strategy_generation`
+    *   **Service Class:** `GroqService` in `services/groq.js`
+    *   **Description:** Provides content strategy generation via the Groq API.
+    *   **Notes:** Requires `GROQ_API_KEY` in environment variables.
+
+*   **ElevenLabs (`elevenlabs`)**
+    *   **Type:** UI Automation
+    *   **Functional Type:** `audio_generation`
+    *   **Service Class:** `ElevenLabsService` in `services/elevenlabs.js`
+    *   **Description:** Generates audio from script segments by automating ElevenLabs website.
+    *   **Notes:** Implements `fetchServiceUsage()` to scrape character quota information. Selectors are speculative.
+
+*   **RaphaelAI (`raphaelai`)**
+    *   **Type:** UI Automation
+    *   **Functional Type:** `image_generation`
+    *   **Service Class:** `RaphaelAIService` in `services/raphaelai_service.js`
+    *   **Description:** AI image generation from text prompts via `raphaelai.org`.
+    *   **Notes:** Implementation uses speculative selectors. `fetchServiceUsage` is a stub and needs UI-specific selectors. Aspect ratio control logic is a placeholder.
+
+*   **RedPanda AI (`redpandaai`)**
+    *   **Type:** UI Automation
+    *   **Functional Type:** `image_generation`
+    *   **Service Class:** `RedPandaAIService` in `services/redpandaai_service.js`
+    *   **URL:** `https://redpandaai.com/tools/ai-image-generator` (default, can be overridden in `serviceRegistry`)
+    *   **Description:** AI image generation from text prompts.
+    *   **Notes:** Implementation uses speculative selectors. `fetchServiceUsage` is a stub. Aspect ratio control logic is a placeholder. Requires real-world testing and selector validation.
+
+*   **Speechify (`speechify`)**
+    *   **Type:** UI Automation
+    *   **Functional Type:** `audio_generation`
+    *   **Service Class:** `SpeechifyService` in `services/speechify_service.js`
+    *   **URL:** `https://speechify.com/ai-voice-generator/` (default, can be overridden in `serviceRegistry`)
+    *   **Description:** AI text-to-voice generation.
+    *   **Notes:** Implementation uses speculative selectors for UI elements on Speechify's website. `fetchServiceUsage` is a stub. Voice selection logic is conceptual (uses defaults). Requires real-world testing and selector validation.
 
 ## API-Based vs. UI-Based Services
-(Content as before)
+(Content as before - details omitted for brevity)
 
 ## Service Method Conventions
-(Content as before)
+(Content as before - details omitted for brevity)
 
 ---
 

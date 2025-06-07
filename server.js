@@ -17,14 +17,44 @@ const TEMP_DIR = path.join(__dirname, 'temp');
 // Service registry with enhanced capabilities
 const serviceRegistry = {
   groq: { module: './services/groq', type: 'api' },
-  claude: { module: './services/claude', url: 'https://claude.ai' },
-  gemini: { module: './services/gemini', url: 'https://gemini.google.com' },
-  elevenlabs: { module: './services/elevenlabs', url: 'https://elevenlabs.io' },
-  runway: { module: './services/runway', url: 'https://runway.ml' },
-  canva: { module: './services/canva', url: 'https://canva.com' },
-  youtube: { module: './services/youtube', url: 'https://youtube.com' },
-  tiktok: { module: './services/tiktok', url: 'https://tiktok.com' },
-  instagram: { module: './services/instagram', url: 'https://instagram.com' }
+  claude: { module: './services/claude', url: 'https://claude.ai', functional_type: 'script_generation', sessionName: 'claude_session' },
+  gemini: { module: './services/gemini', url: 'https://gemini.google.com', functional_type: 'script_generation', sessionName: 'gemini_session' }, // Assuming Gemini is also for scripts
+  elevenlabs: { module: './services/elevenlabs', url: 'https://elevenlabs.io', functional_type: 'audio_generation', sessionName: 'elevenlabs_session' },
+  runway: {
+    module: './services/runway',
+    url: 'https://runway.ml',
+    // Runway can do both, user might prefer it for one or the other.
+    // For default assignment, we might list it primarily as one or have specific sub-services if UI differs vastly.
+    // For now, let's assume user preferences will distinguish if they want runway for images vs video clips.
+    // The getPreferredService logic uses distinct 'service_type' strings.
+    functional_type: 'image_generation video_clip_generation', // Could be an array or space-separated string
+    sessionName: 'runway_session'
+  },
+  raphaelai: {
+    module: './services/raphaelai_service',
+    url: 'https://raphaelai.org/',
+    type: 'ui',
+    functional_type: 'image_generation',
+    sessionName: 'raphaelai_session'
+  },
+  redpandaai: {
+    module: './services/redpandaai_service',
+    url: 'https://redpandaai.com/tools/ai-image-generator',
+    type: 'ui',
+    functional_type: 'image_generation',
+    sessionName: 'redpandaai_session'
+  },
+  speechify: {
+    module: './services/speechify_service',
+    url: 'https://speechify.com/ai-voice-generator/',
+    type: 'ui',
+    functional_type: 'audio_generation',
+    sessionName: 'speechify_session'
+  },
+  canva: { module: './services/canva', url: 'https://canva.com', type: 'ui', functional_type: 'video_compilation', sessionName: 'canva_session' },
+  youtube: { module: './services/youtube', url: 'https://youtube.com', type: 'ui', functional_type: 'social_distribution_youtube', sessionName: 'youtube_session' },
+  tiktok: { module: './services/tiktok', url: 'https://tiktok.com', type: 'ui', functional_type: 'social_distribution_tiktok', sessionName: 'tiktok_session' },
+  instagram: { module: './services/instagram', url: 'https://instagram.com', type: 'ui', functional_type: 'social_distribution_instagram', sessionName: 'instagram_session' }
 };
 
 // Middleware
