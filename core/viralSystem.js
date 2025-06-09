@@ -4,26 +4,57 @@ const fs = require('fs').promises;
 const path = require('path');
 const { v4: uuidv4 } = require('uuid');
 const stream = require('stream'); // Required for fs.createReadStream
+const config = require('../config'); // Added config require
+const logger = require('../lib/logger'); // Added logger require
 
-// Adjusted TEMP_DIR to be relative to the project root from core/
-const TEMP_DIR = path.join(__dirname, '..', 'temp');
-// CREDENTIALS_PATH for Google Drive
-const CREDENTIALS_PATH = path.join(__dirname, '..', 'credentials.json');
+// TEMP_DIR is now sourced from config.tempDir
+// CREDENTIALS_PATH is removed as we are using environment variables.
+
+// Helper function for text truncation
+function truncateText(text, maxLength) {
+  if (typeof text !== 'string') {
+    logger.warn({ inputTextType: typeof text }, 'truncateText received non-string input. Returning as is.');
+    return text;
+  }
+  if (text.length <= maxLength) {
+    return text;
+  }
+  logger.debug({ originalLength: text.length, maxLength }, `Truncating text to ${maxLength} characters.`);
+  return text.substring(0, maxLength);
+}
 
 // Define serviceRegistry here
 // Paths are relative to this file (core/viralSystem.js)
+
+// List of services that are expected but their module files are missing
+const missingServiceFiles = [
+  'claude.js',
+  'gemini.js',
+  'elevenlabs.js',
+  'canva.js',
+  'tiktok.js',
+  'instagram.js'
+];
+
+if (missingServiceFiles.length > 0) {
+  logger.warn({
+    disabledServices: missingServiceFiles.map(f => f.replace('.js', '')),
+    missingFiles: missingServiceFiles.map(f => `services/${f}`)
+  }, 'Some services are disabled due to missing module files. Corresponding entries in serviceRegistry will be commented out.');
+}
+
 const serviceRegistry = {
   // Assuming 'services' directory is at project root, sibling to 'core'
-  webExtractor: { module: '../services/webExtractor', type: 'local' },
-  groq: { module: '../services/groq', type: 'api' },
-  claude: { module: '../services/claude', url: 'https://claude.ai' }, // These might be placeholders if they are just URLs
-  gemini: { module: '../services/gemini', url: 'https://gemini.google.com' },
-  elevenlabs: { module: '../services/elevenlabs', url: 'https://elevenlabs.io' },
-  runway: { module: '../services/runway', url: 'https://runway.ml' },
-  canva: { module: '../services/canva', url: 'https://canva.com' },
-  youtube: { module: '../services/youtube', url: 'https://youtube.com' },
-  tiktok: { module: '../services/tiktok', url: 'https://tiktok.com' },
-  instagram: { module: '../services/instagram', url: 'https://instagram.com' }
+  webExtractor: { module: '../services/webExtractor', type: 'local' }, // Does not use a URL from config.serviceUrls
+  groq: { module: '../services/groq', type: 'api' }, // Does not use a URL from config.serviceUrls for constructor
+  // claude: { module: '../services/claude', url: config.serviceUrls.claude }, // File not found: services/claude.js
+  // gemini: { module: '../services/gemini', url: config.serviceUrls.gemini }, // File not found: services/gemini.js
+  // elevenlabs: { module: '../services/elevenlabs', url: config.serviceUrls.elevenlabs }, // File not found: services/elevenlabs.js
+  runway: { module: '../services/runway', url: config.serviceUrls.runway },
+  // canva: { module: '../services/canva', url: config.serviceUrls.canva }, // File not found: services/canva.js
+  youtube: { module: '../services/youtube', url: config.serviceUrls.youtube }, // Assuming constructor might take a base URL
+  // tiktok: { module: '../services/tiktok', url: config.serviceUrls.tiktok },     // File not found: services/tiktok.js
+  // instagram: { module: '../services/instagram', url: config.serviceUrls.instagram } // File not found: services/instagram.js
 };
 
 class ViralContentSystem {
@@ -39,92 +70,93 @@ class ViralContentSystem {
   async initialize() { // For base system resources (Drive, temp dirs)
     try {
       this.driveClient = await this.authenticateGoogleDrive();
-      await fs.mkdir(TEMP_DIR, { recursive: true });
-      console.log('ViralContentSystem base initialized (Drive client, TempDir).');
+      await fs.mkdir(config.tempDir, { recursive: true });
+      logger.info('ViralContentSystem base initialized (Drive client, TempDir).');
     } catch (error) {
-      console.error('Error during ViralContentSystem base initialization:', error);
-      // Depending on severity, might want to re-throw or handle
-      throw error; // For now, re-throw if base init fails
+      logger.error({ err: error }, 'Error during ViralContentSystem base initialization');
+      throw error;
     }
   }
 
   async _loadService(name) {
     if (this.services[name]) return this.services[name];
 
-    const config = this.serviceRegistry[name];
-    if (!config) {
-      console.error(`Service config for '${name}' not found in registry.`);
+    const serviceConfig = this.serviceRegistry[name]; // Renamed to avoid conflict with global config
+    if (!serviceConfig) {
+      logger.error({ serviceName: name }, 'Service config not found in registry.');
       throw new Error(`Unsupported service in VCS: ${name}`);
     }
 
-    // Ensure module path is resolved correctly from the location of viralSystem.js
-    // The paths in serviceRegistry are already relative to this file.
-    const modulePath = config.module;
+    const modulePath = serviceConfig.module;
 
     try {
       const ServiceModule = require(modulePath);
-      const serviceInstance = config.url ?
-        new ServiceModule(name, config.url) : // Assuming constructor takes (name, url) for some
-        new ServiceModule(); // Assuming default constructor for others
+      const serviceInstance = serviceConfig.url ?
+        new ServiceModule(name, serviceConfig.url) :
+        new ServiceModule();
 
       if (serviceInstance.initialize) {
         await serviceInstance.initialize();
       }
       this.services[name] = serviceInstance;
-      console.log(`Service '${name}' loaded for ViralContentSystem.`);
+      logger.info({ serviceName: name }, 'Service loaded for ViralContentSystem.');
       return serviceInstance;
     } catch (error) {
-      console.error(`Error loading service module '${name}' from path '${modulePath}':`, error);
-      throw error; // Re-throw to indicate failure to load this service
+      logger.error({ err: error, serviceName: name, modulePath }, `Error loading service module`);
+      throw error;
     }
   }
 
   async initialize_dependent_services() {
-    console.log('ViralContentSystem initializing dependent services...');
-    this.services = {}; // Reset services object
+    logger.info('ViralContentSystem initializing dependent services...');
+    this.services = {};
     for (const name of Object.keys(this.serviceRegistry)) {
       try {
         await this._loadService(name);
       } catch (error) {
-        console.error(`Failed to initialize service '${name}' in ViralContentSystem. Error: ${error.message}`);
-        // Optional: Decide if one service failing should stop all.
-        // For now, log and continue. Critical services might warrant a re-throw.
+        // Error is already logged in _loadService
+        logger.error({ err: error, serviceName: name }, `Failed to initialize service in ViralContentSystem. Error: ${error.message}`);
       }
     }
-    console.log('ViralContentSystem dependent services initialization attempt complete.');
+    logger.info('ViralContentSystem dependent services initialization attempt complete.');
   }
 
   async authenticateGoogleDrive() {
-    try {
-      // Check if credentials file exists, warn if not.
-      await fs.access(CREDENTIALS_PATH);
-    } catch (e) {
-      console.warn(`Warning: Google Drive credentials.json not found at ${CREDENTIALS_PATH}. Drive features will be unavailable.`);
-      // Return null or throw, depending on how critical Drive is.
-      // For now, let it proceed, and calls to uploadToDrive will fail.
-      return null;
+    let auth;
+    const scopes = ['https://www.googleapis.com/auth/drive'];
+
+    if (config.googleCredentialsJson) {
+      logger.info('Attempting to use Google Drive credentials from GOOGLE_CREDENTIALS_JSON (via config).');
+      try {
+        const credentials = JSON.parse(config.googleCredentialsJson);
+        auth = new google.auth.GoogleAuth({ credentials, scopes });
+      } catch (error) {
+        logger.error({ err: error }, 'Failed to parse GOOGLE_CREDENTIALS_JSON (from config)');
+        throw new Error('Malformed GOOGLE_CREDENTIALS_JSON (from config). Please check the environment variable or config setup.');
+      }
+    } else if (config.googleApplicationCredentials) {
+      logger.info('Using Google Drive credentials from GOOGLE_APPLICATION_CREDENTIALS (via config).');
+      auth = new google.auth.GoogleAuth({ scopes }); // Relies on GOOGLE_APPLICATION_CREDENTIALS env var being set
+    } else {
+      logger.error('Google Drive credentials not configured. Set GOOGLE_APPLICATION_CREDENTIALS or GOOGLE_CREDENTIALS_JSON.');
+      throw new Error('Google Drive credentials not configured. Unable to initialize Drive client.');
     }
 
-    const auth = new google.auth.GoogleAuth({
-      keyFile: CREDENTIALS_PATH,
-      scopes: ['https://www.googleapis.com/auth/drive']
-    });
     return google.drive({ version: 'v3', auth });
   }
 
   async uploadToDrive(filePath, fileName) {
     if (!this.driveClient) {
-      console.error("Google Drive client not initialized. Cannot upload file.");
-      throw new Error("Google Drive client not initialized. Ensure credentials.json is present and valid.");
+      logger.error("Google Drive client not initialized. Cannot upload file.");
+      throw new Error("Google Drive client not initialized. Ensure credentials are set and valid.");
     }
 
-    // Resolve filePath: if not absolute, assume it's relative to TEMP_DIR
-    const absoluteFilePath = path.isAbsolute(filePath) ? filePath : path.join(TEMP_DIR, filePath);
+    const absoluteFilePath = path.isAbsolute(filePath) ? filePath : path.join(config.tempDir, filePath);
 
     try {
       await fs.access(absoluteFilePath);
     } catch (e) {
-      console.error(`File not found for upload: ${absoluteFilePath}`);
+      logger.error({ err: e, filePath: absoluteFilePath }, 'File not found for upload');
       throw new Error(`File not found for upload: ${absoluteFilePath}`);
     }
 
@@ -148,44 +180,29 @@ class ViralContentSystem {
     try {
       if (!this.services.groq) throw new Error("Groq service not available/initialized.");
       strategy = await this.services.groq.generateStrategy(topic);
-      console.log(`Successfully generated Groq strategy for topic: ${topic}`);
+      logger.debug({ topic, strategyTitle: strategy.title }, `Groq strategy generated`);
     } catch (error) {
-      console.error(`Error during Groq strategy generation for topic: ${topic}`, error);
+      logger.error({ err: error, topic, step: 'GroqStrategy' }, 'Error during Groq strategy generation');
       throw error;
     }
 
     // Step 2: Media creation
-    try {
-      if (!this.services.claude) throw new Error("Claude service not available/initialized.");
-      assets.script = await this.services.claude.generateScript(strategy);
-      console.log(`Successfully generated script with Claude for: ${strategy.title}`);
-    } catch (error) {
-      console.error(`Error generating script with Claude for strategy: ${strategy.title}`, error);
-      throw error;
-    }
-    try {
-      if (!this.services.runway) throw new Error("Runway service not available/initialized.");
-      assets.image = await this.services.runway.generateImage(strategy.visualPrompt);
-      console.log(`Successfully generated image with Runway for: ${strategy.title}`);
-    } catch (error) {
-      console.error(`Error generating image with Runway for strategy: ${strategy.title}`, error);
-      throw error;
-    }
-    try {
-      if (!this.services.elevenlabs) throw new Error("ElevenLabs service not available/initialized.");
-      assets.audio = await this.services.elevenlabs.generateAudio(strategy.scriptSegment);
-      console.log(`Successfully generated audio with ElevenLabs for: ${strategy.title}`);
-    } catch (error) {
-      console.error(`Error generating audio with ElevenLabs for strategy: ${strategy.title}`, error);
-      throw error;
-    }
-    try {
-      if (!this.services.runway) throw new Error("Runway service not available/initialized.");
-      assets.video = await this.services.runway.generateVideo(strategy);
-      console.log(`Successfully generated video with Runway for: ${strategy.title}`);
-    } catch (error) {
-      console.error(`Error generating video with Runway for strategy: ${strategy.title}`, error);
-      throw error;
+    const mediaCreationSteps = [
+      { name: 'ClaudeScript', service: 'claude', func: 'generateScript', input: strategy, outputField: 'script' },
+      { name: 'RunwayImage', service: 'runway', func: 'generateImage', input: strategy.visualPrompt, outputField: 'image' },
+      { name: 'ElevenLabsAudio', service: 'elevenlabs', func: 'generateAudio', input: strategy.scriptSegment, outputField: 'audio' },
+      { name: 'RunwayVideo', service: 'runway', func: 'generateVideo', input: strategy, outputField: 'video' }
+    ];
+
+    for (const step of mediaCreationSteps) {
+      try {
+        if (!this.services[step.service]) throw new Error(`${step.service} service not available/initialized.`);
+        assets[step.outputField] = await this.services[step.service][step.func](step.input);
+        logger.debug({ strategyTitle: strategy.title, step: step.name }, `${step.name} generated`);
+      } catch (error) {
+        logger.error({ err: error, strategyTitle: strategy.title, step: step.name }, `Error during ${step.name}`);
+        throw error;
+      }
     }
 
     // Step 3: Compile final content
@@ -197,24 +214,22 @@ class ViralContentSystem {
         title: strategy.title,
         caption: strategy.caption,
       });
-      // Assuming finalVideo.path is relative to TEMP_DIR or absolute
-      console.log(`Successfully compiled video with Canva for: ${strategy.title}`);
+      logger.debug({ strategyTitle: strategy.title }, `Video compiled with Canva`);
     } catch (error) {
-      console.error(`Error compiling video with Canva for strategy: ${strategy.title}`, error);
+      logger.error({ err: error, strategyTitle: strategy.title, step: 'CanvaCompilation' }, 'Error compiling video with Canva');
       throw error;
     }
 
     // Step 4: Save to Drive
     try {
       const sanitizedTitle = strategy.title.replace(/[^a-zA-Z0-9]/g, '_');
-      // finalVideo.path from canva service might be absolute or relative to TEMP_DIR
       driveResult = await this.uploadToDrive(
         finalVideo.path,
         `${sanitizedTitle}-${contentId}.mp4`
       );
-      console.log(`Successfully uploaded to Drive: ${driveResult.webViewLink}`);
+      logger.info({ strategyTitle: strategy.title, driveLink: driveResult.webViewLink }, `Content uploaded to Drive`);
     } catch (error) {
-      console.error(`Error uploading to Drive for strategy: ${strategy.title}`, error);
+      logger.error({ err: error, strategyTitle: strategy.title, step: 'DriveUpload' }, 'Error uploading to Drive');
       throw error;
     }
 
@@ -224,16 +239,15 @@ class ViralContentSystem {
         try {
             if (!this.services[serviceName]) throw new Error(`${serviceName} service not available/initialized.`);
             posts[serviceName] = await this.services[serviceName].postContent({
-                videoPath: finalVideo.path, // Assuming finalVideo.path is what postContent expects
+                videoPath: finalVideo.path,
                 title: strategy.title,
-                description: strategy.description, // For YouTube
-                caption: strategy.caption, // For TikTok/Instagram
+                description: strategy.description,
+                caption: strategy.caption,
                 tags: strategy.hashtags
             });
-            console.log(`Successfully posted to ${serviceName} for: ${strategy.title}`);
+            logger.info({ strategyTitle: strategy.title, service: serviceName }, `Content posted to ${serviceName}`);
         } catch (error) {
-            console.error(`Error posting to ${serviceName} for title: ${strategy.title}`, error);
-            // Decide if to continue other posts or throw. For now, re-throw to halt.
+            logger.error({ err: error, strategyTitle: strategy.title, service: serviceName, step: 'SocialDistribution'}, `Error posting to ${serviceName}`);
             throw error;
         }
     }
@@ -252,63 +266,58 @@ class ViralContentSystem {
 
     // Step 1: Extract text from URL
     try {
-      if (!this.services.webExtractor) {
-        throw new Error("WebExtractorService not loaded or available.");
-      }
+      if (!this.services.webExtractor) throw new Error("WebExtractorService not loaded or available.");
       extractedText = await this.services.webExtractor.extractText(url);
       if (!extractedText) {
-        console.error(`No content extracted from URL: ${url} (extractor returned null/empty)`);
+        logger.warn({ url }, 'No content extracted from URL (extractor returned null/empty)');
         throw new Error(`No content could be extracted from URL: ${url}`);
       }
-      console.log(`Successfully extracted text from URL: ${url}`);
+      logger.debug({ url, originalTextLength: extractedText.length }, `Text extracted from URL`);
     } catch (error) {
-      console.error(`Error during web extraction from URL: ${url}`, error);
+      logger.error({ err: error, url, step: 'WebExtraction' }, `Error during web extraction from URL`);
       throw error;
     }
 
-    // Step 2: Content strategy with Groq using extracted text
+    // Process text for AI: Truncate if necessary
+    let processedTextForAI = extractedText;
+    if (extractedText && extractedText.length > config.aiInputMaxChars) {
+      processedTextForAI = truncateText(extractedText, config.aiInputMaxChars);
+      logger.warn({
+        originalLength: extractedText.length,
+        truncatedLength: processedTextForAI.length,
+        maxLength: config.aiInputMaxChars,
+        url: url
+      }, 'Extracted text from URL was truncated before sending to AI strategy generator.');
+    }
+
+    // Step 2: Content strategy with Groq using processed (potentially truncated) text
     try {
       if (!this.services.groq) throw new Error("Groq service not available/initialized.");
-      const topicForGroq = `Content strategy for URL: ${url}`;
-      strategy = await this.services.groq.generateStrategy(topicForGroq, extractedText);
-      console.log(`Successfully generated Groq strategy for URL: ${url}`);
+      const topicForGroq = `Content strategy for URL: ${url}`; // Topic can still be the full URL for context
+      strategy = await this.services.groq.generateStrategy(topicForGroq, processedTextForAI);
+      logger.debug({ url, strategyTitle: strategy.title, processedTextLength: processedTextForAI.length }, `Groq strategy generated for URL content`);
     } catch (error) {
-      console.error(`Error during Groq strategy generation for URL: ${url}`, error);
+      logger.error({ err: error, url, step: 'GroqStrategyForURL' }, 'Error during Groq strategy generation for URL');
       throw error;
     }
 
-    // Step 3: Media creation
-    try {
-      if (!this.services.claude) throw new Error("Claude service not available/initialized.");
-      assets.script = await this.services.claude.generateScript(strategy);
-      console.log(`Successfully generated script with Claude for URL content: ${strategy.title}`);
-    } catch (error) {
-      console.error(`Error generating script with Claude for URL strategy: ${strategy.title}`, error);
-      throw error;
-    }
-    try {
-      if (!this.services.runway) throw new Error("Runway service not available/initialized.");
-      assets.image = await this.services.runway.generateImage(strategy.visualPrompt);
-      console.log(`Successfully generated image with Runway for URL content: ${strategy.title}`);
-    } catch (error) {
-      console.error(`Error generating image with Runway for URL strategy: ${strategy.title}`, error);
-      throw error;
-    }
-    try {
-      if (!this.services.elevenlabs) throw new Error("ElevenLabs service not available/initialized.");
-      assets.audio = await this.services.elevenlabs.generateAudio(strategy.scriptSegment);
-      console.log(`Successfully generated audio with ElevenLabs for URL content: ${strategy.title}`);
-    } catch (error) {
-      console.error(`Error generating audio with ElevenLabs for URL strategy: ${strategy.title}`, error);
-      throw error;
-    }
-    try {
-      if (!this.services.runway) throw new Error("Runway service not available/initialized.");
-      assets.video = await this.services.runway.generateVideo(strategy);
-      console.log(`Successfully generated video with Runway for URL content: ${strategy.title}`);
-    } catch (error) {
-      console.error(`Error generating video with Runway for URL strategy: ${strategy.title}`, error);
-      throw error;
+    // Step 3: Media creation (same loop as createViralContent, context varies)
+    const mediaCreationStepsUrl = [
+        { name: 'ClaudeScript', service: 'claude', func: 'generateScript', input: strategy, outputField: 'script' },
+        { name: 'RunwayImage', service: 'runway', func: 'generateImage', input: strategy.visualPrompt, outputField: 'image' },
+        { name: 'ElevenLabsAudio', service: 'elevenlabs', func: 'generateAudio', input: strategy.scriptSegment, outputField: 'audio' },
+        { name: 'RunwayVideo', service: 'runway', func: 'generateVideo', input: strategy, outputField: 'video' }
+      ];
+
+    for (const step of mediaCreationStepsUrl) {
+        try {
+          if (!this.services[step.service]) throw new Error(`${step.service} service not available/initialized.`);
+          assets[step.outputField] = await this.services[step.service][step.func](step.input);
+          logger.debug({ strategyTitle: strategy.title, step: step.name, context: 'URL_Based' }, `${step.name} generated for URL content`);
+        } catch (error) {
+          logger.error({ err: error, strategyTitle: strategy.title, step: step.name, context: 'URL_Based' }, `Error during ${step.name} for URL content`);
+          throw error;
+        }
     }
 
     // Step 4: Compile final content
@@ -320,9 +329,9 @@ class ViralContentSystem {
         title: strategy.title,
         caption: strategy.caption
       });
-      console.log(`Successfully compiled video with Canva for URL content: ${strategy.title}`);
+      logger.debug({ strategyTitle: strategy.title, context: 'URL_Based' }, `Video compiled with Canva for URL content`);
     } catch (error) {
-      console.error(`Error compiling video with Canva for URL strategy: ${strategy.title}`, error);
+      logger.error({ err: error, strategyTitle: strategy.title, step: 'CanvaCompilationURL', context: 'URL_Based' }, 'Error compiling video with Canva for URL content');
       throw error;
     }
 
@@ -333,9 +342,9 @@ class ViralContentSystem {
         finalVideoPath,
         `${sanitizedTitle}-${contentId}.mp4`
       );
-      console.log(`Successfully uploaded to Drive for URL content: ${driveResult.webViewLink}`);
+      logger.info({ strategyTitle: strategy.title, driveLink: driveResult.webViewLink, context: 'URL_Based' }, `Content from URL uploaded to Drive`);
     } catch (error) {
-      console.error(`Error uploading to Drive for URL strategy: ${strategy.title}`, error);
+      logger.error({ err: error, strategyTitle: strategy.title, step: 'DriveUploadURL', context: 'URL_Based' }, 'Error uploading to Drive for URL content');
       throw error;
     }
 
@@ -344,7 +353,6 @@ class ViralContentSystem {
     for(const serviceName of socialServices) {
         try {
             if (!this.services[serviceName]) throw new Error(`${serviceName} service not available/initialized.`);
-            // Assuming finalVideoPath is the correct path expected by postContent
             posts[serviceName] = await this.services[serviceName].postContent({
                 videoPath: finalVideoPath,
                 title: strategy.title,
@@ -352,9 +360,9 @@ class ViralContentSystem {
                 caption: strategy.caption,
                 tags: strategy.hashtags
             });
-            console.log(`Successfully posted to ${serviceName} for URL content: ${strategy.title}`);
+            logger.info({ strategyTitle: strategy.title, service: serviceName, context: 'URL_Based' }, `Content from URL posted to ${serviceName}`);
         } catch (error) {
-            console.error(`Error posting to ${serviceName} for URL title: ${strategy.title}`, error);
+            logger.error({ err: error, strategyTitle: strategy.title, service: serviceName, step: 'SocialDistributionURL', context: 'URL_Based'}, `Error posting content from URL to ${serviceName}`);
             throw error;
         }
     }

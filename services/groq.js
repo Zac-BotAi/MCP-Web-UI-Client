@@ -1,14 +1,17 @@
 const { Groq } = require("groq-sdk");
 const retry = require('async-retry');
+const config = require('../../config'); // Added config require
+const logger = require('../../lib/logger'); // Added logger require
 
 class GroqService {
   constructor() {
-    if (!process.env.GROQ_API_KEY) {
-      console.warn("GROQ_API_KEY environment variable is not set. GroqService will not be able to function.");
-      // Optionally, throw an error here to prevent initialization if the key is critical
-      // throw new Error("GROQ_API_KEY is missing.");
+    if (!config.groqApiKey) {
+      logger.warn("Groq API key is not set in config. GroqService will not be able to function.");
     }
-    this.groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
+    this.groq = new Groq({
+      apiKey: config.groqApiKey,
+      timeout: config.timeouts.groqMs, // Added timeout from config
+    });
   }
 
   async generateStrategy(topic, urlContent) {
@@ -65,18 +68,23 @@ class GroqService {
     return retry(async (bail, attemptNumber) => {
       try {
         if (attemptNumber > 1) {
-          console.log(`Retrying Groq strategy generation for ${contextIdentifier} (Attempt ${attemptNumber})`);
+          logger.info({ contextIdentifier, attemptNumber }, `Retrying Groq strategy generation`);
         }
 
-        const response = await this.groq.chat.completions.create({
-          messages: [{ role: "user", content: prompt }],
-          model: "mixtral-8x7b-32768",
-          response_format: { type: "json_object" }
-        });
+        const response = await this.groq.chat.completions.create(
+          {
+            messages: [{ role: "user", content: prompt }],
+            model: "mixtral-8x7b-32768",
+            response_format: { type: "json_object" }
+          }
+          // Per-request timeout can also be set here using an AbortSignal,
+          // but client-level timeout is generally cleaner if all requests should use it.
+          // Example: { signal: AbortSignal.timeout(config.timeouts.groqMs) }
+        );
 
         if (!response || !response.choices || !response.choices[0] || !response.choices[0].message || !response.choices[0].message.content) {
-          console.error(`Malformed response from Groq for ${contextIdentifier} on attempt ${attemptNumber}:`, response);
-          throw new Error("Malformed response from Groq API"); // This will be retried
+          logger.error({ contextIdentifier, attemptNumber, responseContent: response }, `Malformed response from Groq`);
+          throw new Error("Malformed response from Groq API");
         }
 
         const messageContent = response.choices[0].message.content;
@@ -84,43 +92,38 @@ class GroqService {
         try {
           return JSON.parse(messageContent);
         } catch (jsonError) {
-          console.error(`Failed to parse JSON response from Groq for ${contextIdentifier}:`, messageContent, jsonError);
-          // Bail on JSON parsing errors as retrying the same content won't help
+          logger.error({ err: jsonError, contextIdentifier, messageContent }, `Failed to parse JSON response from Groq`);
           bail(new Error(`Failed to parse JSON response from Groq: ${jsonError.message}`));
-          return null; // Should not be reached due to bail
+          return null;
         }
 
       } catch (error) {
-        console.error(`Groq API call attempt ${attemptNumber} for ${contextIdentifier} failed: ${error.message}`);
+        // Log the error with context
+        logger.warn({ err: error, contextIdentifier, attemptNumber, isBail: error.bail }, `Groq API call attempt failed`);
 
-        // Handle specific Groq SDK errors or HTTP status codes
-        // The Groq SDK might wrap HTTP errors or have specific error types.
-        // This example assumes errors might have a 'status' property for HTTP codes.
-        // Adjust based on actual error objects thrown by the Groq SDK.
         if (error.status === 401 || error.status === 403) {
-          console.error(`Authentication/Authorization error with Groq API (${error.status}). Bailing out.`);
+          logger.error({ err: error, contextIdentifier, status: error.status }, `Authentication/Authorization error with Groq API. Bailing out.`);
           bail(error);
-          return null; // Should not be reached
-        } else if (error.status === 429) {
-          console.warn(`Rate limit hit for Groq API. Retrying...`);
-          throw error; // Re-throw to let async-retry handle backoff
-        } else if (error.message === "Malformed response from Groq API") {
-            throw error; // Re-throw to retry malformed responses
+          return null;
+        } else if (error.message === "Malformed response from Groq API" && attemptNumber === (config.jobDefaultAttempts || 3)) {
+           // If it's the last attempt for a malformed response, bail.
+           logger.error({ err: error, contextIdentifier, attemptNumber }, `Malformed response from Groq on final attempt. Bailing out.`);
+           bail(error);
+           return null;
         }
-        // For other errors (e.g., 5xx, network issues), re-throw to allow retries
+        // For other errors (429, 5xx, network issues, or malformed not on last attempt), re-throw to allow retries
         throw error;
       }
     }, {
-      retries: 3,
+      retries: config.jobDefaultAttempts || 3, // Use config or default
       factor: 2,
-      minTimeout: 1000, // 1 second
-      maxTimeout: 10000, // 10 seconds
+      minTimeout: config.jobDefaultBackoffDelay || 1000, // Use config or default
+      maxTimeout: 10000, // Keep a max timeout
       onRetry: (error, attemptNumber) => {
-        console.log(`Preparing for Groq retry attempt ${attemptNumber} for ${contextIdentifier} due to: ${error.message}`);
+        logger.warn({ err: error, contextIdentifier, attemptNumber }, `Preparing for Groq retry attempt`);
       }
     }).catch(finalError => {
-      console.error(`Failed to generate Groq strategy for ${contextIdentifier} after multiple retries:`, finalError);
-      // Re-throw the final error so the caller can handle it
+      logger.error({ err: finalError, contextIdentifier }, `Failed to generate Groq strategy after multiple retries`);
       throw new Error(`Failed to generate Groq strategy for ${contextIdentifier} after multiple retries: ${finalError.message}`);
     });
   }

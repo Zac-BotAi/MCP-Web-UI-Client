@@ -14,11 +14,16 @@ const path = require('path');
 // const { v4: uuidv4 } = require('uuid'); // Moved to core/viralSystem.js
 const contentCreationQueue = require('./lib/queue');
 const { ViralContentSystem } = require('./core/viralSystem'); // Import from new location
+const helmet = require('helmet'); // Added helmet require
+const rateLimit = require('express-rate-limit'); // Added express-rate-limit require
+const config = require('./config'); // Added config require
+const logger = require('./lib/logger'); // Added logger require
 
 const app = express();
-const port = 3000;
+app.use(helmet()); // Use helmet for enhanced security
+// const port = 3000; // Port now from config
 const SESSION_DIR = path.join(__dirname, 'sessions');
-// const TEMP_DIR = path.join(__dirname, 'temp'); // TEMP_DIR is now managed within ViralContentSystem
+// const TEMP_DIR = path.join(__dirname, 'temp'); // TEMP_DIR is now managed by ViralContentSystem via config
 
 // Service registry, loadService, initializeServices are removed as they are now in ViralContentSystem.
 
@@ -34,9 +39,39 @@ app.use(express.json());
 // So, we still need an instance, but its services are loaded differently.
 let viralSystem; // Declare to be initialized in start()
 
+// Health Check Endpoint
+app.get('/health', (req, res) => {
+  const healthStatus = {
+    status: 'ok',
+    timestamp: new Date().toISOString(),
+    uptime: process.uptime(), // Optional: include process uptime in seconds
+  };
+  res.status(200).json(healthStatus);
+});
+
+// Rate limiter configuration
+const apiLimiter = rateLimit({
+  windowMs: config.apiRateLimitWindowMs,
+  max: config.apiRateLimitMax,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    jsonrpc: '2.0',
+    error: {
+      code: -32005, // Custom error code for rate limiting
+      message: 'Too many requests created from this IP, please try again after 15 minutes.'
+    },
+    id: null // Typically, no specific request id for a rate limit global error
+             // If req.body.id is needed, a custom handler would be more appropriate
+  },
+  // Note: For the 'id' in the rate limit message, if it's crucial to reflect the specific request's id,
+  // a custom 'handler' function for rateLimit would be needed to access `req.body.id`.
+  // The default 'message' option doesn't have direct access to 'req'.
+  // For now, 'id: null' is kept as per the simpler setup.
+});
 
 // MCP Endpoint for viral content creation
-app.post('/mcp/viral-content', async (req, res) => {
+app.post('/mcp/viral-content', apiLimiter, async (req, res) => { // Added apiLimiter to the route
   const { id: requestId, method, params } = req.body; // Renamed id to requestId for clarity
 
   // Ensure params is an object if it's undefined, for safer access later
@@ -75,7 +110,7 @@ app.post('/mcp/viral-content', async (req, res) => {
     // Add job to queue
     try {
       const job = await contentCreationQueue.add(method, jobData);
-      console.log(`Job ${job.id} added to queue ${method} with data:`, jobData);
+      logger.info({ jobId: job.id, jobName: method, jobData }, 'Job added to queue');
 
       // Respond with 202 Accepted
       return res.status(202).json({
@@ -89,7 +124,7 @@ app.post('/mcp/viral-content', async (req, res) => {
       });
 
     } catch (queueError) {
-      console.error(`Failed to add job to queue (${method}):`, queueError);
+      logger.error({ err: queueError, jobName: method, jobData, requestId }, 'Failed to add job to queue');
       return res.status(503).json({ // Service Unavailable
         jsonrpc: '2.0',
         error: {
@@ -103,11 +138,17 @@ app.post('/mcp/viral-content', async (req, res) => {
   } catch (error) {
     // This main catch block now primarily handles unexpected errors
     // or errors from the validation logic if any were missed (though they should return directly).
-    console.error(`Unexpected error in /mcp/viral-content endpoint: ${error.message}`, error);
+    // Log the full error server-side for debugging
+    logger.error({ err: error, requestId }, 'API Endpoint Unhandled Error');
+
+    // Send a generic error message to the client
     res.status(500).json({
       jsonrpc: '2.0',
-      error: { code: -32000, message: 'Internal server error.' }, // Generic message for unexpected errors
-      id: requestId
+      error: {
+        code: -32000, // Standard JSON-RPC server error code
+        message: 'An internal server error occurred. The issue has been logged. Please try again later.'
+      },
+      id: requestId // Ensure 'id' is correctly sourced from the request body (aliased as requestId)
     });
   }
 });
@@ -116,47 +157,53 @@ app.post('/mcp/viral-content', async (req, res) => {
 
 // Start server
 async function start() {
-  await fs.mkdir(SESSION_DIR, { recursive: true });
+  try {
+    await fs.mkdir(SESSION_DIR, { recursive: true });
 
-  console.log('Initializing ViralContentSystem for server...');
-  viralSystem = new ViralContentSystem();
-  await viralSystem.initialize(); // Base initialization (Drive, TempDir)
-  await viralSystem.initialize_dependent_services(); // Initialize all dependent services
-  console.log('ViralContentSystem for server initialized successfully.');
+    logger.info('Initializing ViralContentSystem for server...');
+    viralSystem = new ViralContentSystem();
+    await viralSystem.initialize(); // Base initialization (Drive, TempDir)
+    await viralSystem.initialize_dependent_services(); // Initialize all dependent services
+    logger.info('ViralContentSystem for server initialized successfully.');
+    logger.info('Helmet middleware enabled for enhanced security.');
+    logger.info('API rate limiting enabled for /mcp/viral-content.');
+    logger.info('Health check endpoint /health configured.'); // Log health check endpoint
   
-  app.listen(port, () => {
-    console.log(`Viral Content MCP running on port ${port}`);
-    // The concept of "Supported services" from the old serviceRegistry might be logged differently now,
-    // perhaps by listing keys from viralSystem.services if needed.
-    // For now, removing the specific log about serviceRegistry.
-  });
+    app.listen(config.port, () => {
+      logger.info(`Viral Content MCP running on port ${config.port}`);
+    });
+  } catch (error) {
+    logger.fatal({ err: error }, 'Failed to start server');
+    process.exit(1);
+  }
 }
 
 // Cleanup
 process.on('SIGINT', async () => {
-  console.log('Shutting down...');
+  logger.info('Shutting down server gracefully...');
   if (viralSystem && viralSystem.services) {
     for (const serviceName in viralSystem.services) {
       const service = viralSystem.services[serviceName];
       if (service && typeof service.close === 'function') {
         try {
           await service.close();
-          console.log(`Service ${serviceName} closed.`);
+          logger.info({ serviceName }, `Service closed.`);
         } catch (err) {
-          console.error(`Error closing service ${serviceName}:`, err);
+          logger.error({ err, serviceName }, `Error closing service.`);
         }
       }
     }
   }
-  // Also close the queue connection if it's managed here or if the queue client needs explicit closing
+  // Also close the queue connection
   if (contentCreationQueue && typeof contentCreationQueue.close === 'function') {
     try {
       await contentCreationQueue.close();
-      console.log('BullMQ contentCreationQueue closed.');
+      logger.info('BullMQ contentCreationQueue closed.');
     } catch (err) {
-      console.error('Error closing BullMQ queue:', err);
+      logger.error({ err }, 'Error closing BullMQ queue.');
     }
   }
+  logger.info('Server shutdown complete.');
   process.exit(0);
 });
 
