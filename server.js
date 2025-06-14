@@ -1,5 +1,6 @@
 // server.js - Enhanced Viral Content MCP System
 const express = require('express');
+const pino = require('pino');
 const { chromium } = require('playwright');
 const fs = require('fs').promises;
 const path = require('path');
@@ -9,6 +10,7 @@ const { v4: uuidv4 } = require('uuid');
 const { supabase } = require('./utils/supabaseClient'); // Import Supabase client
 const { sendAdminNotification } = require('./utils/telegramNotifier'); // Import Telegram Notifier
 
+const logger = pino({ level: process.env.LOG_LEVEL || 'info' });
 const app = express();
 const PORT = process.env.PORT || 3000; // Use PORT from environment or default to 3000
 const SESSION_DIR = path.join(__dirname, 'sessions');
@@ -71,15 +73,15 @@ class ViralContentSystem {
   }
   
   async initialize() {
-    console.log('ViralContentSystem initializing...');
+    logger.info('ViralContentSystem initializing...');
     // Initialize Google Drive
     this.driveClient = await this.authenticateGoogleDrive();
-    console.log('Google Drive client authenticated.');
+    logger.info('Google Drive client authenticated.');
     
     // Create temp directory
     await fs.mkdir(TEMP_DIR, { recursive: true });
-    console.log('Temp directory created.');
-    console.log('ViralContentSystem initialized successfully.');
+    logger.info('Temp directory created.');
+    logger.info('ViralContentSystem initialized successfully.');
   }
   
   async authenticateGoogleDrive() {
@@ -88,15 +90,15 @@ class ViralContentSystem {
       try {
         const credentials = JSON.parse(process.env.GOOGLE_CREDENTIALS);
         authOptions.credentials = credentials;
-        console.log('Using GOOGLE_CREDENTIALS environment variable for Google Drive authentication.');
+        logger.info('Using GOOGLE_CREDENTIALS environment variable for Google Drive authentication.');
       } catch (e) {
-        console.error('Failed to parse GOOGLE_CREDENTIALS. Falling back to keyFile. Error:', e.message);
+        logger.error({ err: e }, 'Failed to parse GOOGLE_CREDENTIALS. Falling back to keyFile. Error: %s', e.message);
         authOptions.keyFile = 'credentials.json';
-        console.log('Using credentials.json for Google Drive authentication (failed to parse GOOGLE_CREDENTIALS).');
+        logger.info('Using credentials.json for Google Drive authentication (failed to parse GOOGLE_CREDENTIALS).');
       }
     } else {
       authOptions.keyFile = 'credentials.json';
-      console.log('Using credentials.json for Google Drive authentication (GOOGLE_CREDENTIALS not set).');
+      logger.info('Using credentials.json for Google Drive authentication (GOOGLE_CREDENTIALS not set).');
     }
     const auth = new google.auth.GoogleAuth(authOptions);
     return google.drive({ version: 'v3', auth });
@@ -115,7 +117,7 @@ class ViralContentSystem {
   async getPreferredService(userId, serviceType, defaultServiceId) {
     let serviceToUseId = defaultServiceId;
     const logContext = userId ? `[${userId}]` : `[SystemDefault]`;
-    console.log(\`\${logContext} [ServiceSelection] Getting preferred service for type: \${serviceType}, default: \${defaultServiceId}\`);
+    logger.info(\`\${logContext} [ServiceSelection] Getting preferred service for type: \${serviceType}, default: \${defaultServiceId}\`);
 
     if (supabase && userId) {
       try {
@@ -127,32 +129,32 @@ class ViralContentSystem {
           .order('priority', { ascending: true });
 
         if (prefError) {
-          console.warn(\`\${logContext} [ServiceSelection] Error fetching preferences for \${serviceType}: \${prefError.message}. Using default.\`);
+          logger.warn({ err: prefError }, \`\${logContext} [ServiceSelection] Error fetching preferences for \${serviceType}: \${prefError.message}. Using default.\`);
         } else if (preferences && preferences.length > 0) {
           for (const pref of preferences) {
             if (serviceRegistry[pref.service_id]) {
               serviceToUseId = pref.service_id;
-              console.log(\`\${logContext} [ServiceSelection] User preference found: Using '\${serviceToUseId}' for \${serviceType} (Priority: \${pref.priority}).\`);
+              logger.info(\`\${logContext} [ServiceSelection] User preference found: Using '\${serviceToUseId}' for \${serviceType} (Priority: \${pref.priority}).\`);
               break;
             } else {
-              console.log(\`\${logContext} [ServiceSelection] User preferred service '\${pref.service_id}' not found/usable in registry for \${serviceType}. Trying next.\`);
+              logger.info(\`\${logContext} [ServiceSelection] User preferred service '\${pref.service_id}' not found/usable in registry for \${serviceType}. Trying next.\`);
             }
           }
           if (serviceToUseId === defaultServiceId && preferences.length > 0) { // Only log if preferences existed but none were matched
-               console.log(\`\${logContext} [ServiceSelection] None of user's preferred services for \${serviceType} were available/found in registry. Using default '\${defaultServiceId}'.\`);
+               logger.info(\`\${logContext} [ServiceSelection] None of user's preferred services for \${serviceType} were available/found in registry. Using default '\${defaultServiceId}'.\`);
           }
         } else {
-          console.log(\`\${logContext} [ServiceSelection] No user preferences set for \${serviceType}. Using default '\${defaultServiceId}'.\`);
+          logger.info(\`\${logContext} [ServiceSelection] No user preferences set for \${serviceType}. Using default '\${defaultServiceId}'.\`);
         }
       } catch (error) {
-        console.error(\`\${logContext} [ServiceSelection] Exception fetching preferences for \${serviceType}: \${error.message}. Using default.\`);
+        logger.error({ err: error }, \`\${logContext} [ServiceSelection] Exception fetching preferences for \${serviceType}: \${error.message}. Using default.\`);
       }
     } else {
-       console.log(\`[ServiceSelection] No user or Supabase client for preference check. Using default '\${defaultServiceId}' for \${serviceType}.\`);
+       logger.info(\`[ServiceSelection] No user or Supabase client for preference check. Using default '\${defaultServiceId}' for \${serviceType}.\`);
     }
 
     if (!serviceRegistry[serviceToUseId]) {
-        console.error(\`[ServiceSelection] CRITICAL: Service ID '\${serviceToUseId}' (selected for \${serviceType}) not in serviceRegistry! This indicates a misconfiguration or issue with default values.\`);
+        logger.error(\`[ServiceSelection] CRITICAL: Service ID '\${serviceToUseId}' (selected for \${serviceType}) not in serviceRegistry! This indicates a misconfiguration or issue with default values.\`);
         // Fallback to a known default or throw error. For now, let it proceed and fail at loadService.
     }
     return serviceToUseId;
@@ -162,95 +164,95 @@ class ViralContentSystem {
     const contentId = uuidv4();
     const userLogPrefix = userId ? `[User:\${userId.substring(0,8)}]` : `[System]`;
     const aspectRatio = clientParams.aspectRatio; // Extract aspect ratio
-    console.log(\`\${userLogPrefix} --- Starting createViralContent for topic: ${topic}, AspectRatio: \${aspectRatio || 'default'} --- ${contentId}\`);
+    logger.info(\`\${userLogPrefix} --- Starting createViralContent for topic: ${topic}, AspectRatio: \${aspectRatio || 'default'} --- ${contentId}\`);
     
     // Step 1: Content strategy
     const strategyServiceId = await this.getPreferredService(userId, 'strategy_generation', 'groq');
     const strategyService = await loadService(strategyServiceId);
-    console.log(\`\${userLogPrefix} [\${contentId}] [ViralWorkflow] Step 1: Generating content strategy with \${strategyServiceId}...\`);
+    logger.info(\`\${userLogPrefix} [\${contentId}] [ViralWorkflow] Step 1: Generating content strategy with \${strategyServiceId}...\`);
     const strategy = await strategyService.generateStrategy(topic);
-    console.log(\`\${userLogPrefix} [\${contentId}] [ViralWorkflow] Strategy generated successfully with \${strategyServiceId}.\`);
+    logger.info(\`\${userLogPrefix} [\${contentId}] [ViralWorkflow] Strategy generated successfully with \${strategyServiceId}.\`);
     
     // Step 2: Media creation
-    console.log(\`\${userLogPrefix} [\${contentId}] [ViralWorkflow] Step 2: Generating media assets...\`);
+    logger.info(\`\${userLogPrefix} [\${contentId}] [ViralWorkflow] Step 2: Generating media assets...\`);
 
     const scriptServiceId = await this.getPreferredService(userId, 'script_generation', 'claude');
     const scriptService = await loadService(scriptServiceId);
-    console.log(\`\${userLogPrefix} [\${contentId}] [ViralWorkflow] Step 2a: Generating script with \${scriptServiceId}...\`);
+    logger.info(\`\${userLogPrefix} [\${contentId}] [ViralWorkflow] Step 2a: Generating script with \${scriptServiceId}...\`);
     const script = await scriptService.generateScript(strategy);
-    console.log(\`\${userLogPrefix} [\${contentId}] [ViralWorkflow] Script generated with \${scriptServiceId}: ${script.substring(0, 50)}...\`);
+    logger.info(\`\${userLogPrefix} [\${contentId}] [ViralWorkflow] Script generated with \${scriptServiceId}: ${script.substring(0, 50)}...\`);
 
     const imageServiceId = await this.getPreferredService(userId, 'image_generation', 'runway'); // Default can be runway
     const imageService = await loadService(imageServiceId);
-    console.log(\`\${userLogPrefix} [\${contentId}] [ViralWorkflow] Step 2b: Generating image with \${imageServiceId} (Aspect: \${aspectRatio || 'default'})...\`);
+    logger.info(\`\${userLogPrefix} [\${contentId}] [ViralWorkflow] Step 2b: Generating image with \${imageServiceId} (Aspect: \${aspectRatio || 'default'})...\`);
     const image = await imageService.generateImage(strategy.visualPrompt, aspectRatio); // Pass aspectRatio
-    console.log(\`\${userLogPrefix} [\${contentId}] [ViralWorkflow] Image generated with \${imageServiceId}: ${image.path}`);
+    logger.info(\`\${userLogPrefix} [\${contentId}] [ViralWorkflow] Image generated with \${imageServiceId}: ${image.path}`);
 
     const audioServiceId = await this.getPreferredService(userId, 'audio_generation', 'elevenlabs');
     const audioService = await loadService(audioServiceId);
-    console.log(\`\${userLogPrefix} [\${contentId}] [ViralWorkflow] Step 2c: Generating audio with \${audioServiceId}...\`);
+    logger.info(\`\${userLogPrefix} [\${contentId}] [ViralWorkflow] Step 2c: Generating audio with \${audioServiceId}...\`);
     const audio = await audioService.generateAudio(strategy.scriptSegment);
-    console.log(\`\${userLogPrefix} [\${contentId}] [ViralWorkflow] Audio generated with \${audioServiceId}: ${audio.path}`);
+    logger.info(\`\${userLogPrefix} [\${contentId}] [ViralWorkflow] Audio generated with \${audioServiceId}: ${audio.path}`);
 
     // Assuming Runway is also used for video clip generation by default
     const videoClipServiceId = await this.getPreferredService(userId, 'video_clip_generation', 'runway');
     const videoClipService = await loadService(videoClipServiceId);
-    console.log(\`\${userLogPrefix} [\${contentId}] [ViralWorkflow] Step 2d: Generating video clip with \${videoClipServiceId}...\`);
+    logger.info(\`\${userLogPrefix} [\${contentId}] [ViralWorkflow] Step 2d: Generating video clip with \${videoClipServiceId}...\`);
     const video = await videoClipService.generateVideo(strategy); // Assuming generateVideo is the method for clips
-    console.log(\`\${userLogPrefix} [\${contentId}] [ViralWorkflow] Video clip generated with \${videoClipServiceId}: ${video.path}`);
+    logger.info(\`\${userLogPrefix} [\${contentId}] [ViralWorkflow] Video clip generated with \${videoClipServiceId}: ${video.path}`);
 
     const assets = { script, image, audio, video };
-    console.log(\`\${userLogPrefix} [\${contentId}] [ViralWorkflow] All media assets generated.\`);
+    logger.info(\`\${userLogPrefix} [\${contentId}] [ViralWorkflow] All media assets generated.\`);
     
     // Step 3: Compile final content
     const compilationServiceId = await this.getPreferredService(userId, 'video_compilation', 'canva');
     const compilationService = await loadService(compilationServiceId);
-    console.log(\`\${userLogPrefix} [\${contentId}] [ViralWorkflow] Step 3: Compiling final content with \${compilationServiceId}...\`);
+    logger.info(\`\${userLogPrefix} [\${contentId}] [ViralWorkflow] Step 3: Compiling final content with \${compilationServiceId}...\`);
     const finalVideo = await compilationService.compileVideo({
       ...assets,
       music: strategy.viralMusicPrompt
     });
-    console.log(\`\${userLogPrefix} [\${contentId}] [ViralWorkflow] Final video compiled with \${compilationServiceId}: ${finalVideo.path}`);
+    logger.info(\`\${userLogPrefix} [\${contentId}] [ViralWorkflow] Final video compiled with \${compilationServiceId}: ${finalVideo.path}`);
     
     // Step 4: Save to Drive
-    console.log(`[${contentId}] [ViralWorkflow] Step 4: Saving to Google Drive...`);
+    logger.info(`[${contentId}] [ViralWorkflow] Step 4: Saving to Google Drive...`);
     const driveResult = await this.uploadToDrive(
       finalVideo.path, 
       `${strategy.title}-${contentId}.mp4`
     );
-    console.log(`[${contentId}] [ViralWorkflow] Saved to Google Drive. Link: ${driveResult.webViewLink}`);
+    logger.info(`[${contentId}] [ViralWorkflow] Saved to Google Drive. Link: ${driveResult.webViewLink}`);
     
     // Step 5: Social distribution
-    console.log(`[${contentId}] [ViralWorkflow] Step 5: Distributing to social platforms...`);
+    logger.info(`[${contentId}] [ViralWorkflow] Step 5: Distributing to social platforms...`);
     const posts = {};
 
-    console.log(`[${contentId}] [ViralWorkflow] Step 5a: Posting to YouTube...`);
+    logger.info(`[${contentId}] [ViralWorkflow] Step 5a: Posting to YouTube...`);
     posts.youtube = await this.services.youtube.postContent({
       video: finalVideo.path,
       title: strategy.title,
       description: strategy.description,
       tags: strategy.hashtags
     });
-    console.log(`[${contentId}] [ViralWorkflow] YouTube post successful. Post ID: ${posts.youtube.postId || posts.youtube}`); // Adjusted for actual return
+    logger.info(`[${contentId}] [ViralWorkflow] YouTube post successful. Post ID: ${posts.youtube.postId || posts.youtube}`); // Adjusted for actual return
 
-    console.log(`[${contentId}] [ViralWorkflow] Step 5b: Posting to TikTok...`);
+    logger.info(`[${contentId}] [ViralWorkflow] Step 5b: Posting to TikTok...`);
     posts.tiktok = await this.services.tiktok.postContent({
       video: finalVideo.path,
       caption: strategy.caption,
       tags: strategy.hashtags
     });
-    console.log(`[${contentId}] [ViralWorkflow] TikTok post successful. Post ID: ${posts.tiktok.postId}`);
+    logger.info(`[${contentId}] [ViralWorkflow] TikTok post successful. Post ID: ${posts.tiktok.postId}`);
 
-    console.log(`[${contentId}] [ViralWorkflow] Step 5c: Posting to Instagram...`);
+    logger.info(`[${contentId}] [ViralWorkflow] Step 5c: Posting to Instagram...`);
     posts.instagram = await this.services.instagram.postContent({
       video: finalVideo.path,
       caption: strategy.caption,
       tags: strategy.hashtags
     });
-    console.log(`[${contentId}] [ViralWorkflow] Instagram post successful. Post ID: ${posts.instagram.postId}`);
+    logger.info(`[${contentId}] [ViralWorkflow] Instagram post successful. Post ID: ${posts.instagram.postId}`);
 
-    console.log(`[${contentId}] [ViralWorkflow] Social distribution completed.`);
-    console.log(`--- Finished createViralContent for topic: ${topic}. Content ID: ${contentId} ---`);
+    logger.info(`[${contentId}] [ViralWorkflow] Social distribution completed.`);
+    logger.info(`--- Finished createViralContent for topic: ${topic}. Content ID: ${contentId} ---`);
     
     return {
       contentId,
@@ -287,20 +289,20 @@ const authMiddleware = async (req, res, next) => {
     const { data: { user }, error } = await supabase.auth.getUser(token);
 
     if (error) {
-      console.warn('[AuthMiddleware] Supabase getUser error:', error.message);
+      logger.warn({ err: error }, '[AuthMiddleware] Supabase getUser error: %s', error.message);
       return res.status(401).json({ error: 'Unauthorized: Invalid or expired token.', details: error.message });
     }
 
     if (!user) {
-      console.warn('[AuthMiddleware] No user found for token, though no error was reported by Supabase.');
+      logger.warn('[AuthMiddleware] No user found for token, though no error was reported by Supabase.');
       return res.status(401).json({ error: 'Unauthorized: User not found for token.' });
     }
 
     req.user = user; // Attach user object to the request
-    // console.log('[AuthMiddleware] User authenticated:', user.id, user.email);
+    // logger.info('[AuthMiddleware] User authenticated:', user.id, user.email);
     next(); // Proceed to the next middleware or route handler
   } catch (error) {
-    console.error('[AuthMiddleware] Exception:', error.message, error.stack);
+    logger.error({ err: error, stack: error.stack }, `[AuthMiddleware] Exception: ${error.message}`);
     res.status(500).json({ error: 'Internal server error during authentication.' });
   }
 };
@@ -308,7 +310,7 @@ const authMiddleware = async (req, res, next) => {
 // MCP Endpoint for viral content creation
 app.post('/mcp/viral-content', authMiddleware, async (req, res) => {
   // req.user is now available, e.g., req.user.id
-  console.log(`[ViralContent] Request received from authenticated user: ${req.user.id}`);
+  logger.info(`[ViralContent] Request received from authenticated user: ${req.user.id}`);
   const { id: requestId, method, params } = req.body; // Renamed 'id' from req.body to 'requestId'
   
   try {
@@ -341,7 +343,7 @@ app.post('/mcp/viral-content', authMiddleware, async (req, res) => {
   } catch (error) {
     const { topic } = params || {};
     const errorMessage = `[ERROR] Viral content creation failed for topic '${topic}' (User: ${req.user.id}, Request ID: ${requestId}): ${error.message}`;
-    console.error(errorMessage, error.stack);
+    logger.error({ err: error, stack: error.stack }, errorMessage);
     // Send admin notification for critical error
     await sendAdminNotification(
       `Critical error in /mcp/viral-content for topic '${topic}' (User: ${req.user.id}). Error: ${error.message}`,
@@ -363,17 +365,17 @@ async function loadService(name) {
   const config = serviceRegistry[name];
   if (!config) throw new Error(`Unsupported service: ${name}`);
   
-  console.log(`Loading service module: ${name} from ${config.module}`);
+  logger.info(`Loading service module: ${name} from ${config.module}`);
   const Service = require(config.module);
   const service = config.url ? 
     new Service(name, config.url) : 
     new Service();
-  console.log(`Service ${name} instantiated.`);
+  logger.info(`Service ${name} instantiated.`);
   
   if (service.initialize) {
-    console.log(`Initializing service: ${name}...`);
+    logger.info(`Initializing service: ${name}...`);
     await service.initialize();
-    console.log(`Service ${name} initialized successfully.`);
+    logger.info(`Service ${name} initialized successfully.`);
   }
   viralSystem.services[name] = service;
   return service;
@@ -381,11 +383,11 @@ async function loadService(name) {
 
 // Initialize services
 async function initializeServices() {
-  console.log('Initializing all services...');
+  logger.info('Initializing all services...');
   for (const name of Object.keys(serviceRegistry)) {
     await loadService(name);
   }
-  console.log('All services initialized.');
+  logger.info('All services initialized.');
 }
 
 // Start server
@@ -394,14 +396,14 @@ async function start() {
   await initializeServices();
   
   app.listen(PORT, () => { // Use capitalized PORT here
-    console.log(`Viral Content MCP running on port ${PORT}`);
-    console.log(`Supported services: ${Object.keys(serviceRegistry).join(', ')}`);
+    logger.info(`Viral Content MCP running on port ${PORT}`);
+    logger.info(`Supported services: ${Object.keys(serviceRegistry).join(', ')}`);
   });
 }
 
 // Cleanup
 process.on('SIGINT', async () => {
-  console.log('Shutting down...');
+  logger.info('Shutting down...');
   for (const service of Object.values(viralSystem.services)) {
     if (service.close) await service.close();
   }
@@ -414,8 +416,15 @@ app.post('/api/auth/signup', async (req, res) => {
   if (!supabase) return res.status(503).json({ error: 'Supabase client not initialized. Auth features unavailable.' });
   const { email, password, fullName, avatarUrl, solanaWalletAddress } = req.body;
 
-  if (!email || !password) {
-    return res.status(400).json({ error: 'Email and password are required.' });
+  // Input validation
+  if (!email || !/\S+@\S+\.\S+/.test(email)) {
+    return res.status(400).json({ error: 'Valid email is required.' });
+  }
+  if (!password || password.length < 8) {
+    return res.status(400).json({ error: 'Password must be at least 8 characters long.' });
+  }
+  if (!fullName) { // Assuming fullName is mandatory for the users table
+    return res.status(400).json({ error: 'Full name is required.' });
   }
 
   try {
@@ -425,16 +434,16 @@ app.post('/api/auth/signup', async (req, res) => {
     });
 
     if (signUpError) {
-      console.error('[AuthSignup] Supabase signUp error:', signUpError.message);
+      logger.error({ err: signUpError }, '[AuthSignup] Supabase signUp error: %s', signUpError.message);
       return res.status(400).json({ error: signUpError.message });
     }
 
     if (!authData.user) {
-        console.error('[AuthSignup] Supabase signUp did not return a user.');
+        logger.error('[AuthSignup] Supabase signUp did not return a user.');
         return res.status(500).json({ error: 'Signup failed: No user data returned.' });
     }
 
-    console.log('[AuthSignup] Supabase user signed up:', authData.user.id, authData.user.email);
+    logger.info('[AuthSignup] Supabase user signed up: %s, %s', authData.user.id, authData.user.email);
 
     const { data: publicUser, error: publicUserError } = await supabase
       .from('users')
@@ -448,10 +457,10 @@ app.post('/api/auth/signup', async (req, res) => {
       .select();
 
     if (publicUserError) {
-      console.error('[AuthSignup] Error creating public user profile:', publicUserError.message);
+      logger.error({ err: publicUserError }, '[AuthSignup] Error creating public user profile: %s', publicUserError.message);
       // Not sending admin notification for this, as it's logged and user auth itself succeeded.
     } else {
-      console.log('[AuthSignup] Public user profile created/updated:', publicUser ? publicUser[0] : null);
+      logger.info('[AuthSignup] Public user profile created/updated: %s', publicUser ? publicUser[0] : null);
     }
 
     // Send admin notification for new user signup
@@ -469,7 +478,7 @@ app.post('/api/auth/signup', async (req, res) => {
     });
 
   } catch (error) {
-    console.error('[AuthSignup] Exception:', error.message, error.stack);
+    logger.error({ err: error, stack: error.stack }, '[AuthSignup] Exception: %s', error.message);
     res.status(500).json({ error: 'Internal server error during signup.' });
   }
 });
@@ -489,13 +498,13 @@ app.post('/api/auth/login', async (req, res) => {
     });
 
     if (error) {
-      console.error('[AuthLogin] Supabase signIn error:', error.message);
+      logger.error({ err: error }, '[AuthLogin] Supabase signIn error: %s', error.message);
       return res.status(400).json({ error: error.message });
     }
-    console.log('[AuthLogin] User logged in:', data.user.id, data.user.email);
+    logger.info('[AuthLogin] User logged in: %s, %s', data.user.id, data.user.email);
     res.status(200).json(data);
   } catch (error) {
-    console.error('[AuthLogin] Exception:', error.message, error.stack);
+    logger.error({ err: error, stack: error.stack }, '[AuthLogin] Exception: %s', error.message);
     res.status(500).json({ error: 'Internal server error during login.' });
   }
 });
@@ -504,20 +513,20 @@ app.post('/api/auth/logout', authMiddleware, async (req, res) => {
   if (!supabase) return res.status(503).json({ error: 'Supabase client not initialized.' });
 
   // req.user is available here if needed for logging or specific logic
-  console.log(`[AuthLogout] User ${req.user.id} attempting to logout.`);
+  logger.info(`[AuthLogout] User ${req.user.id} attempting to logout.`);
 
   try {
     const { error } = await supabase.auth.signOut(); // Uses the JWT from the client (via Supabase internal handling if client sets it) or relies on client to discard.
                                                      // For server-initiated signOut with JWT, supabase.auth.admin.signOut(jwt) might be needed, but client-driven is typical.
                                                      // The primary effect of supabase.auth.signOut() when called with a user's JWT is to invalidate that user's refresh tokens on the server.
     if (error) {
-      console.error('[AuthLogout] Supabase signOut error:', error.message);
+      logger.error({ err: error }, '[AuthLogout] Supabase signOut error: %s', error.message);
       return res.status(400).json({ error: error.message });
     }
-    console.log(`[AuthLogout] User ${req.user.id} logged out. Client should discard JWT.`);
+    logger.info(`[AuthLogout] User ${req.user.id} logged out. Client should discard JWT.`);
     res.status(200).json({ message: 'Logout successful. Please discard your token.' });
   } catch (error) {
-    console.error('[AuthLogout] Exception:', error.message, error.stack);
+    logger.error({ err: error, stack: error.stack }, '[AuthLogout] Exception: %s', error.message);
     res.status(500).json({ error: 'Internal server error during logout.' });
   }
 });
@@ -535,7 +544,7 @@ app.get('/api/auth/user', authMiddleware, async (req, res) => {
       .single();
 
     if (profileError && profileError.code !== 'PGRST116') { // PGRST116: row not found
-        console.warn(`[AuthUser] Error fetching public profile for user ${user.id}:`, profileError.message);
+        logger.warn({ err: profileError }, `[AuthUser] Error fetching public profile for user ${user.id}: %s`, profileError.message);
     }
 
     // Combine Supabase auth user with public profile data
@@ -543,7 +552,7 @@ app.get('/api/auth/user', authMiddleware, async (req, res) => {
     res.status(200).json(userResponse);
 
   } catch (error) {
-    console.error(`[AuthUser] Exception for user ${user.id}:`, error.message, error.stack);
+    logger.error({ err: error, stack: error.stack }, `[AuthUser] Exception for user ${user.id}: %s`, error.message);
     res.status(500).json({ error: 'Internal server error while fetching user details.' });
   }
 });
@@ -561,7 +570,7 @@ app.post('/api/user/preferences', authMiddleware, async (req, res) => {
     return res.status(400).json({ error: 'Invalid preferences format. Must be an array of {service_type, service_id, priority}.' });
   }
 
-  console.log(\`[UserPrefs][\${userId}] Updating service preferences.\`, preferences);
+  logger.info({ preferences }, `[UserPrefs][\${userId}] Updating service preferences.`);
 
   try {
     const preferencesByType = preferences.reduce((acc, p) => {
@@ -585,7 +594,7 @@ app.post('/api/user/preferences', authMiddleware, async (req, res) => {
         .match({ user_id: userId, service_type: serviceType });
 
       if (deleteError) {
-        console.error(\`[UserPrefs][\${userId}] Error deleting old preferences for \${serviceType}:\`, deleteError);
+        logger.error({ err: deleteError }, \`[UserPrefs][\${userId}] Error deleting old preferences for \${serviceType}:\`);
         await sendAdminNotification(\`Error deleting old prefs for user \${userId}, type \${serviceType}.\`, 'user_preference_error', { userId, serviceType, error: deleteError.message });
         // Decide if this is fatal for the whole request or just this type. For now, continue.
       }
@@ -597,18 +606,18 @@ app.post('/api/user/preferences', authMiddleware, async (req, res) => {
           .insert(prefsForType);
 
         if (insertError) {
-          console.error(\`[UserPrefs][\${userId}] Error inserting new preferences for \${serviceType}:\`, insertError);
+          logger.error({ err: insertError }, \`[UserPrefs][\${userId}] Error inserting new preferences for \${serviceType}:\`);
           await sendAdminNotification(\`Error inserting new prefs for user \${userId}, type \${serviceType}.\`, 'user_preference_error', { userId, serviceType, error: insertError.message });
           return res.status(500).json({ error: \`Failed to update preferences for \${serviceType}.\`});
         }
       }
     }
 
-    console.log(\`[UserPrefs][\${userId}] Service preferences updated successfully.\`);
+    logger.info(\`[UserPrefs][\${userId}] Service preferences updated successfully.\`);
     res.status(200).json({ message: 'Preferences updated successfully.' });
 
   } catch (error) {
-    console.error(\`[UserPrefs][\${userId}] Exception updating preferences:\`, error);
+    logger.error({ err: error, stack: error.stack }, \`[UserPrefs][\${userId}] Exception updating preferences:\`);
     await sendAdminNotification(\`Exception updating preferences for user \${userId}.\`, 'user_preference_error', { userId, error: error.message, stack: error.stack });
     res.status(500).json({ error: 'Internal server error while updating preferences.' });
   }
@@ -627,14 +636,14 @@ app.get('/api/user/preferences', authMiddleware, async (req, res) => {
       .order('priority', { ascending: true });
 
     if (error) {
-      console.error(\`[UserPrefs][\${userId}] Error fetching preferences:\`, error);
+      logger.error({ err: error }, \`[UserPrefs][\${userId}] Error fetching preferences:\`);
       return res.status(500).json({ error: 'Failed to fetch preferences.' });
     }
 
     res.status(200).json(data || []);
 
   } catch (error) {
-    console.error(\`[UserPrefs][\${userId}] Exception fetching preferences:\`, error);
+    logger.error({ err: error, stack: error.stack }, \`[UserPrefs][\${userId}] Exception fetching preferences:\`);
     res.status(500).json({ error: 'Internal server error while fetching preferences.' });
   }
 });
@@ -693,7 +702,7 @@ app.post('/api/payments/initiate_subscription', authMiddleware, async (req, res)
   const { planId, solanaPriceUSD } = req.body; // planId: 'monthly', 'annual'. solanaPriceUSD needed if converting dynamically
   const userId = req.user.id;
 
-  console.log(`[PaymentInitiate][\${userId}] Initiating subscription for plan: \${planId}`);
+  logger.info(\`[PaymentInitiate][\${userId}] Initiating subscription for plan: \${planId}\`);
 
   // --- Price Configuration (Example - should be in a config or DB) ---
   const plans = {
@@ -727,12 +736,12 @@ app.post('/api/payments/initiate_subscription', authMiddleware, async (req, res)
       .single();
 
     if (paymentError) {
-      console.error(\`[PaymentInitiate][\${userId}] Error creating pending payment record:\`, paymentError);
+      logger.error({ err: paymentError }, \`[PaymentInitiate][\${userId}] Error creating pending payment record:\`);
       await sendAdminNotification(\`Failed to create pending payment for user \${userId}, plan \${planId}.\`, 'payment_error', { userId, planId, error: paymentError.message });
       return res.status(500).json({ error: 'Failed to initiate payment record.' });
     }
 
-    console.log(\`[PaymentInitiate][\${userId}] Pending payment \${paymentRecord.id} created for \${planId}. Ref: \${paymentReference}\`);
+    logger.info(\`[PaymentInitiate][\${userId}] Pending payment \${paymentRecord.id} created for \${planId}. Ref: \${paymentReference}\`);
 
     res.status(200).json({
       message: 'Payment initiation successful. Proceed with Solana Pay.',
@@ -745,7 +754,7 @@ app.post('/api/payments/initiate_subscription', authMiddleware, async (req, res)
     });
 
   } catch (error) {
-    console.error(\`[PaymentInitiate][\${userId}] Exception in /initiate_subscription:\`, error);
+    logger.error({ err: error, stack: error.stack }, \`[PaymentInitiate][\${userId}] Exception in /initiate_subscription:\`);
     await sendAdminNotification(\`Exception during payment initiation for user \${userId}, plan \${planId}.\`, 'payment_error', { userId, planId, error: error.message, stack: error.stack });
     res.status(500).json({ error: 'Internal server error during payment initiation.' });
   }
@@ -758,12 +767,12 @@ app.post('/api/payments/webhook/solana_confirmation', async (req, res) => {
   const webhookSecret = req.headers['x-webhook-secret'];
 
   if (webhookSecret !== process.env.SOLANA_WEBHOOK_SECRET) {
-    console.warn('[Webhook] Unauthorized webhook attempt. IP:', req.ip);
+    logger.warn({ ip: req.ip, body: req.body }, '[Webhook] Unauthorized webhook attempt.');
     await sendAdminNotification('Unauthorized Solana webhook attempt.', 'security_alert', { ip: req.ip, body: req.body });
     return res.status(403).json({ error: 'Forbidden. Invalid secret.' });
   }
 
-  console.log(\`[Webhook] Received Solana confirmation for reference: \${reference}, TxSig: \${transactionSignature}, Status: \${solanaStatus}\`);
+  logger.info(\`[Webhook] Received Solana confirmation for reference: \${reference}, TxSig: \${transactionSignature}, Status: \${solanaStatus}\`);
 
   try {
     const { data: payment, error: findError } = await supabase
@@ -774,13 +783,13 @@ app.post('/api/payments/webhook/solana_confirmation', async (req, res) => {
       .single();
 
     if (findError || !payment) {
-      console.error(\`[Webhook] Payment record not found or already processed for reference: \${reference}\`, findError);
+      logger.error({ err: findError, reference, body: req.body }, \`[Webhook] Payment record not found or already processed for reference: \${reference}\`);
       await sendAdminNotification(\`Webhook: Payment record not found/processed for ref \${reference}.\`, 'payment_webhook_error', { reference, body: req.body, findError: findError ? findError.message : 'Not found' });
       return res.status(404).json({ error: 'Payment record not found or already processed.' });
     }
 
     if (solanaStatus !== 'confirmed' && solanaStatus !== 'finalized') {
-        console.log(\`[Webhook] Payment \${payment.id} for ref \${reference} not yet confirmed by processor. Status: \${solanaStatus}\`);
+        logger.info(\`[Webhook] Payment \${payment.id} for ref \${reference} not yet confirmed by processor. Status: \${solanaStatus}\`);
         // Optionally update status to 'pending_processor_confirmation' if desired
         // await supabase.from('payments').update({ status: 'pending_processor_confirmation', metadata: { ...payment.metadata, processor_status: solanaStatus } }).eq('id', payment.id);
         return res.status(200).json({ message: 'Webhook received, payment awaiting final confirmation from processor.'});
@@ -799,7 +808,7 @@ app.post('/api/payments/webhook/solana_confirmation', async (req, res) => {
       .single();
 
     if (updatePaymentError) {
-      console.error(\`[Webhook] Error updating payment record \${payment.id} for ref \${reference}:\`, updatePaymentError);
+      logger.error({ err: updatePaymentError, reference, paymentId: payment.id }, \`[Webhook] Error updating payment record \${payment.id} for ref \${reference}:\`);
       await sendAdminNotification(\`Webhook: Failed to update payment \${payment.id} (ref \${reference}) after confirmation.\`, 'payment_webhook_error', { reference, paymentId: payment.id, error: updatePaymentError.message });
       return res.status(500).json({ error: 'Failed to update payment record.' });
     }
@@ -819,18 +828,18 @@ app.post('/api/payments/webhook/solana_confirmation', async (req, res) => {
       .single();
 
     if (updateUserError) {
-      console.error(\`[Webhook] Error updating user \${payment.user_id} subscription for payment \${payment.id}:\`, updateUserError);
+      logger.error({ err: updateUserError, reference, paymentId: payment.id, userId: payment.user_id }, \`[Webhook] Error updating user \${payment.user_id} subscription for payment \${payment.id}:\`);
       await sendAdminNotification(\`Webhook: Failed to update user \${payment.user_id} subscription for payment \${payment.id}.\`, 'payment_webhook_error', { reference, paymentId: payment.id, userId: payment.user_id, error: updateUserError.message });
       return res.status(500).json({ error: 'Payment processed, but failed to update user subscription.' });
     }
 
-    console.log(\`[Webhook] User \${payment.user_id} subscription updated successfully. Plan: \${updatedPayment.metadata.planId}, Expires: \${newExpiryDate.toISOString()}\`);
+    logger.info(\`[Webhook] User \${payment.user_id} subscription updated successfully. Plan: \${updatedPayment.metadata.planId}, Expires: \${newExpiryDate.toISOString()}\`);
     await sendAdminNotification(\`New successful subscription: User \${payment.user_id}, Plan: \${updatedPayment.metadata.planId}, Tx: \${transactionSignature ? transactionSignature.substring(0,10) : 'N/A'}...\`, 'new_subscription', { userId: payment.user_id, plan: updatedPayment.metadata.planId, paymentId: payment.id });
 
     res.status(200).json({ message: 'Webhook processed successfully. Subscription updated.' });
 
   } catch (error) {
-    console.error('[Webhook] Exception:', error);
+    logger.error({ err: error, stack: error.stack, reference, body: req.body }, '[Webhook] Exception:');
     await sendAdminNotification(\`Exception in Solana Webhook for ref \${reference}.\`, 'payment_webhook_error', { reference, error: error.message, stack: error.stack, body: req.body });
     res.status(500).json({ error: 'Internal server error processing webhook.' });
   }
@@ -845,7 +854,7 @@ app.get('/api/service/:serviceId/usage', authMiddleware, async (req, res) => {
   const { serviceId } = req.params;
   const userId = req.user.id;
 
-  console.log(`[ServiceUsage][\${userId}] User requesting usage for service: \${serviceId}`);
+  logger.info(\`[ServiceUsage][\${userId}] User requesting usage for service: \${serviceId}\`);
 
   const serviceConfig = serviceRegistry[serviceId];
   if (!serviceConfig || !serviceConfig.module) {
@@ -883,7 +892,7 @@ app.get('/api/service/:serviceId/usage', authMiddleware, async (req, res) => {
     res.status(200).json({ serviceId, usageData });
 
   } catch (error) {
-    console.error(\`[ServiceUsage][\${userId}] Error fetching usage for \${serviceId}:\`, error.message, error.stack);
+    logger.error({ err: error, stack: error.stack, userId, serviceId }, \`[ServiceUsage][\${userId}] Error fetching usage for \${serviceId}:\`);
     if (serviceInstance && typeof serviceInstance.takeScreenshotOnError === 'function') {
       // The errorContextName here could be more specific if error occurred within serviceInstance methods
       await serviceInstance.takeScreenshotOnError('getServiceUsageApiHandler');
